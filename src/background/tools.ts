@@ -45,6 +45,16 @@ type AtomicTypePreparation = {
   tried: string[];
   error?: string;
 };
+type DraftInspection = {
+  empty: boolean;
+  target_kind: string;
+  scope_kind: string;
+  target_text: string;
+  all_text: string;
+  residue_preview: string;
+  tried: string[];
+  error?: string;
+};
 
 /** 把 session 绑定到一个 tab（首次发消息时调用） */
 export function bindSessionToTab(sessionId: string, tabId: number): void {
@@ -561,24 +571,26 @@ async function inspectAtomicType(tabId: number, token: string, expected: string)
       const actual = readText(target);
       const editables = scope ? Array.from(scope.querySelectorAll(editableSelector)).filter(isVisible) : [target];
       if (!editables.includes(target)) editables.unshift(target);
-      const residues = editables
-        .filter((el) => el !== target && normalize(readText(el)).includes(normalize(inputText)))
-        .map(readText);
+      const uniqueEditables = editables.filter((el, index, arr) => arr.indexOf(el) === index);
+      const otherTexts = uniqueEditables
+        .filter((el) => el !== target)
+        .map(readText)
+        .filter((text) => Boolean(normalize(text)));
       const targetRepeats = repeatedCount(actual);
       const submit = submitButtonState(scope);
       const placeholderVisible = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? false : isPlaceholderVisible(target);
       let error: string | undefined;
       if (!normalize(inputText) || normalize(actual) !== normalize(inputText)) {
         error = targetRepeats > 1 ? `输入内容重复了 ${targetRepeats} 次，已阻止继续提交` : '目标编辑器内容与要输入的文本不一致';
-      } else if (residues.length > 0) {
-        error = '目标文本出现在同一输入作用域的其他编辑器中';
+      } else if (otherTexts.length > 0) {
+        error = '输入作用域内存在额外文本，已阻止继续提交';
       } else if (placeholderVisible) {
         error = '编辑器 placeholder 仍可见，页面没有接受这次富文本输入';
       } else if (submit.disabled) {
         error = `输入后“${submit.label}”按钮仍不可用，页面没有接受这次富文本输入`;
       }
 
-      const residuePreview = residues.concat(targetRepeats > 1 ? [actual] : []).join(' | ').slice(0, 180);
+      const residuePreview = otherTexts.concat(targetRepeats > 1 ? [actual] : []).join(' | ').slice(0, 180);
       return {
         ok: !error,
         target_kind: targetKind(target),
@@ -593,6 +605,81 @@ async function inspectAtomicType(tabId: number, token: string, expected: string)
       };
     },
     [token, expected],
+  );
+}
+
+async function inspectAtomicDraft(tabId: number, token: string): Promise<DraftInspection> {
+  return runInPage<DraftInspection>(
+    tabId,
+    (markerToken) => {
+      const tried: string[] = ['inspect_atomic_draft'];
+      const editableSelector = 'textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]';
+      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
+      const scope = document.querySelector(`[data-hermes-type-scope="${markerToken}"]`) || target?.parentElement || null;
+
+      function normalize(value: string | null | undefined): string {
+        return (value || '').replace(/\s+/g, ' ').trim();
+      }
+
+      function readText(el: Element | null): string {
+        if (!el) return '';
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value || '';
+        return (el as HTMLElement).innerText || el.textContent || '';
+      }
+
+      function targetKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el instanceof HTMLTextAreaElement) return 'textarea';
+        if (el instanceof HTMLInputElement) return `input:${el.type || 'text'}`;
+        if (el instanceof HTMLElement && el.isContentEditable) return 'contenteditable';
+        if (el.getAttribute('role') === 'textbox') return 'role=textbox';
+        return el.tagName.toLowerCase();
+      }
+
+      function scopeKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el.getAttribute('role')) return `role=${el.getAttribute('role')}`;
+        return el.tagName.toLowerCase();
+      }
+
+      function isVisible(node: Element): boolean {
+        const rect = (node as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(node as HTMLElement);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0.05;
+      }
+
+      if (!target) {
+        return {
+          empty: false,
+          target_kind: 'none',
+          scope_kind: scopeKind(scope),
+          target_text: '',
+          all_text: '',
+          residue_preview: '',
+          tried,
+          error: '目标编辑器标记丢失',
+        };
+      }
+
+      const editables = scope ? Array.from(scope.querySelectorAll(editableSelector)).filter(isVisible) : [target];
+      if (!editables.includes(target)) editables.unshift(target);
+      const texts = editables
+        .filter((el, index, arr) => arr.indexOf(el) === index)
+        .map(readText)
+        .filter((text) => Boolean(normalize(text)));
+      const allText = texts.join(' | ');
+      return {
+        empty: texts.length === 0,
+        target_kind: targetKind(target),
+        scope_kind: scopeKind(scope),
+        target_text: readText(target),
+        all_text: allText,
+        residue_preview: allText.slice(0, 180),
+        tried,
+        error: texts.length > 0 ? '输入前作用域没有清空' : undefined,
+      };
+    },
+    [token],
   );
 }
 
@@ -665,7 +752,7 @@ async function rollbackAtomicType(tabId: number, token: string, expected: string
       }
 
       const actual = readText(target);
-      const residue = editables.map(readText).filter((text) => normalize(text).includes(normalize(inputText))).join(' | ').slice(0, 180);
+      const residue = editables.map(readText).filter((text) => Boolean(normalize(text))).join(' | ').slice(0, 180);
       return {
         ok: false,
         target_kind: targetKind(target),
@@ -680,6 +767,16 @@ async function rollbackAtomicType(tabId: number, token: string, expected: string
     },
     [token, expected, snapshots],
   );
+}
+
+async function clearFocusedEditableWithTrustedKeys(tabId: number, tried: string[]): Promise<void> {
+  tried.push('cdp_select_all_backspace');
+  const platform = await chrome.runtime.getPlatformInfo().catch(() => ({ os: 'mac' as chrome.runtime.PlatformOs }));
+  const modifier = platform.os === 'mac' ? 4 : 2;
+  await cdp.pressKey(tabId, 'a', 'KeyA', modifier);
+  await new Promise((r) => setTimeout(r, 80));
+  await cdp.pressKey(tabId, 'Backspace', 'Backspace');
+  await new Promise((r) => setTimeout(r, 180));
 }
 
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
@@ -719,6 +816,26 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       break;
     }
 
+    if (isRichTextTarget(preparation.target_kind)) {
+      await clearFocusedEditableWithTrustedKeys(tabId, tried);
+      const emptyStatus = await inspectAtomicDraft(tabId, token);
+      tried.push(...emptyStatus.tried);
+      if (!emptyStatus.empty) {
+        lastStatus = {
+          ok: false,
+          target_kind: emptyStatus.target_kind,
+          scope_kind: emptyStatus.scope_kind,
+          actual_text: emptyStatus.target_text,
+          residue_preview: emptyStatus.residue_preview,
+          placeholder_visible: false,
+          error: emptyStatus.error || '富文本编辑器清空失败，未执行输入',
+          rollback: false,
+          tried,
+        };
+        break;
+      }
+    }
+
     await strategy.run();
     await new Promise((r) => setTimeout(r, 180));
     let status = await inspectAtomicType(tabId, token, args.text);
@@ -748,12 +865,22 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     }
 
     const rollback = await rollbackAtomicType(tabId, token, args.text, preparation.snapshots);
+    let rollbackResidue = rollback.residue_preview || status.residue_preview;
+    let rollbackOk = !!rollback.rollback;
+    if (isRichTextTarget(status.target_kind)) {
+      await clearFocusedEditableWithTrustedKeys(tabId, tried);
+      const afterClear = await inspectAtomicDraft(tabId, token);
+      tried.push(...afterClear.tried);
+      rollbackResidue = afterClear.residue_preview || rollbackResidue;
+      rollbackOk = afterClear.empty;
+    }
     lastStatus = {
       ...status,
-      rollback: rollback.rollback,
-      residue_preview: rollback.residue_preview || status.residue_preview,
+      rollback: rollbackOk,
+      residue_preview: rollbackResidue,
       tried,
     };
+    if (!rollbackOk) break;
   }
 
   const status = lastStatus;
