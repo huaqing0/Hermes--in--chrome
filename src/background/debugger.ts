@@ -84,6 +84,17 @@ export async function insertText(tabId: number, text: string) {
   await send(tabId, 'Input.insertText', { text });
 }
 
+export async function typeTextByKeyEvents(tabId: number, text: string) {
+  for (const ch of Array.from(text)) {
+    await send(tabId, 'Input.dispatchKeyEvent', {
+      type: 'char',
+      key: ch,
+      text: ch,
+      unmodifiedText: ch,
+    });
+  }
+}
+
 export async function pressKey(tabId: number, key: string, code?: string, modifiers = 0) {
   const mods: Array<{ k: string; c: string; f: number }> = [];
   if (modifiers & 1) mods.push({ k: 'Alt',     c: 'AltLeft',     f: 1 });

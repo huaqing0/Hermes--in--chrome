@@ -383,7 +383,7 @@ TOOLS: list[tuple[str, str, dict]] = [
         "key",
         {
             "name": "ext_key",
-            "description": "按下键盘快捷键。支持修饰键组合，用 '+' 连接，如 'Enter'、'Meta+Enter'（Mac Cmd+Enter）、'Ctrl+Enter'、'Shift+Tab'。适合提交表单、触发快捷操作。X/Twitter 发帖：输入文字后先用 ext_key(key='Meta+Enter')；若弹窗仍存在，再读弹窗并点击“发帖/全部发帖”按钮，绝不要点击“添加帖子”。",
+            "description": "按下键盘快捷键。支持修饰键组合，用 '+' 连接，如 'Enter'、'Meta+Enter'（Mac Cmd+Enter）、'Ctrl+Enter'、'Shift+Tab'。注意：此工具只证明按键已发送，不证明表单已经提交成功。X/Twitter 发帖：输入文字后先用 ext_key(key='Meta+Enter')；随后必须 ext_wait + ext_read_page 复查弹窗是否关闭或新帖是否出现。若弹窗仍存在，再读弹窗并点击“发帖/全部发帖”按钮，绝不要点击“添加帖子”。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -500,8 +500,8 @@ EXTRA_SYSTEM_PROMPT = """\
 - 用户说「查/告诉我 X」→ 倾向 web_search 或 ext_fetch_url
 - 搜索引擎结果页是 SPA，fetch_url 拿不到，用 web_search 或浏览器路径
 - YouTube/Twitter/Notion 等 SPA 必须走浏览器（ext_navigate + ext_read_page + ext_click）
-- **X/Twitter 发帖**：ext_navigate("https://x.com/compose/post") → ext_read_page(filter="interactive") → ext_type(ref_id=帖子文本, text=...)。只有 ext_type 返回 verified=true 后才能 ext_key(key='Meta+Enter') 或点击“发帖/全部发帖”。如果 ext_type 报错或 verified 不是 true，必须重新定位文本框，禁止提交空帖子。如果弹窗仍存在，只能点击明确叫“发帖”或“全部发帖”的按钮；“添加帖子”是添加 thread 的第二条，不是发布；“下一步”通常不是最终发布。不要反复重复输入同一段文字。
-- **YouTube 评论**：先点击评论框 → ext_read_page(filter="interactive") → ext_type(ref_id=评论文本框, text=...)。只有 verified=true 后才能点击“评论”/“Comment”；否则重新找 textbox，禁止提交空评论。
+- **X/Twitter 发帖**：ext_navigate("https://x.com/compose/post") → ext_read_page(filter="interactive") → ext_type(ref_id=帖子文本, text=...)。只有 ext_type 返回 verified=true 后才能 ext_key(key='Meta+Enter') 或点击“发帖/全部发帖”。如果 ext_type 报错或 verified 不是 true，必须重新定位文本框，禁止提交空帖子。ext_key 只代表按键已发送，不代表发布成功；按下后必须 ext_wait(1000-3000) + ext_read_page 复查：弹窗关闭、新帖出现在时间线/个人页，才可以说发布成功。如果弹窗仍存在或发帖按钮仍不可用，必须告诉用户没有发布成功。只能点击明确叫“发帖”或“全部发帖”的按钮；“添加帖子”是添加 thread 的第二条，不是发布；“下一步”通常不是最终发布。不要反复重复输入同一段文字。
+- **YouTube 评论**：先点击评论框 → ext_read_page(filter="interactive") → ext_type(ref_id=评论文本框, text=...)。只有 verified=true 后才能点击“评论”/“Comment”；否则重新找 textbox，禁止提交空评论。点击后必须 ext_wait + ext_read_page 复查评论是否出现，不能只因为点击成功就报告成功。
 
 # 严格按字面理解
 - 「最早 / 第一支 / first / oldest」→ 按时间最远那个，不是最新

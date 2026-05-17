@@ -27,6 +27,13 @@ type PageTypeAttempt = {
   error?: string;
   tried: string[];
 };
+type EditableStatus = {
+  target_kind: string;
+  actual_text: string;
+  placeholder_visible: boolean;
+  submit_button_label?: string;
+  submit_button_disabled?: boolean;
+};
 
 /** 把 session 绑定到一个 tab（首次发消息时调用） */
 export function bindSessionToTab(sessionId: string, tabId: number): void {
@@ -325,6 +332,22 @@ async function pageTypeAttempt(tabId: number, refId: string | undefined, text: s
       focusTarget(target);
       clearTarget(target);
 
+      // contenteditable / role=textbox 一般是 React 受控编辑器（Draft.js / Slate / Lexical /
+      // ProseMirror）— 它们检查 InputEvent.isTrusted，会拒绝合成事件，导致 DOM 写入但
+      // internal state 不更新（placeholder 不消失、提交按钮不亮）。这里直接跳过 DOM 策略，
+      // 让外层 typeText 走 CDP Input.insertText（trusted event）。
+      if (target instanceof HTMLElement && !(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)
+          && (target.isContentEditable || target.getAttribute('role') === 'textbox')) {
+        tried.push('skipped_dom_for_contenteditable');
+        return {
+          ok: false,
+          strategy: 'skipped_dom_for_contenteditable',
+          target_kind: targetKind(target),
+          actual_text: readText(target),
+          tried,
+        };
+      }
+
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         tried.push('native_value_setter');
         const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -373,7 +396,7 @@ async function pageTypeAttempt(tabId: number, refId: string | undefined, text: s
   );
 }
 
-async function readEditableText(tabId: number, refId?: string): Promise<{ target_kind: string; actual_text: string }> {
+async function readEditableText(tabId: number, refId?: string): Promise<EditableStatus> {
   return runInPage(
     tabId,
     (targetRef) => {
@@ -401,7 +424,88 @@ async function readEditableText(tabId: number, refId?: string): Promise<{ target
         : el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
           ? el.value || ''
           : (el as HTMLElement).innerText || el.textContent || '';
-      return { target_kind, actual_text };
+
+      // Placeholder 是否还可见 — 对 React 受控编辑器（Draft.js / Slate / Lexical /
+      // ProseMirror）来说，placeholder 还在显示 == internal state 仍为空 == 没真正接受输入。
+      // 检查范围：目标 contenteditable 自身及其最近的相对定位容器（通常 placeholder 是
+      // absolute 兄弟节点）。
+      function isPlaceholderVisible(root: Element): boolean {
+        const scope = root.closest('[role="dialog"],form,article,section,div') || root.parentElement || root;
+        const selectors = [
+          '[data-placeholder]',
+          '[aria-placeholder]:not([contenteditable])',
+          '.public-DraftEditorPlaceholder-root',
+          '.public-DraftEditorPlaceholder-inner',
+          '[data-slate-placeholder]',
+          '[data-lexical-text-placeholder]',
+          '.ProseMirror-placeholder',
+        ];
+        for (const sel of selectors) {
+          const nodes = scope.querySelectorAll(sel);
+          for (const node of Array.from(nodes)) {
+            const r = (node as HTMLElement).getBoundingClientRect();
+            const style = window.getComputedStyle(node as HTMLElement);
+            if (r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0.05) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+
+      function buttonText(button: Element): string {
+        return [
+          button.getAttribute('aria-label'),
+          button.getAttribute('title'),
+          button.textContent,
+        ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      }
+
+      function isVisible(node: Element): boolean {
+        const rect = (node as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(node as HTMLElement);
+        return rect.width > 0
+          && rect.height > 0
+          && style.visibility !== 'hidden'
+          && style.display !== 'none'
+          && parseFloat(style.opacity || '1') > 0.05;
+      }
+
+      function submitButtonState(root: Element): { label?: string; disabled?: boolean } {
+        const scope = root.closest('[role="dialog"],form,article,section') || root.parentElement || root;
+        const buttons = Array.from(scope.querySelectorAll('button,[role="button"]')).filter(isVisible);
+        const positive = /(发帖|发布|发送|评论|回复|post|tweet|send|comment|reply)/i;
+        const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿)/i;
+        for (const button of buttons) {
+          const label = buttonText(button);
+          if (!label || !positive.test(label) || negative.test(label)) continue;
+          const style = window.getComputedStyle(button as HTMLElement);
+          const disabled = (button instanceof HTMLButtonElement && button.disabled)
+            || button.getAttribute('aria-disabled') === 'true'
+            || button.getAttribute('disabled') != null
+            || style.pointerEvents === 'none';
+          return { label, disabled };
+        }
+        return {};
+      }
+
+      const placeholder_visible = !el
+        ? false
+        : el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+          ? false
+          : isPlaceholderVisible(el);
+
+      const submit = !el || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+        ? {}
+        : submitButtonState(el);
+
+      return {
+        target_kind,
+        actual_text,
+        placeholder_visible,
+        submit_button_label: submit.label,
+        submit_button_disabled: submit.disabled,
+      };
     },
     [refId ?? null],
   );
@@ -411,6 +515,15 @@ function normalizedIncludes(actual: string, expected: string): boolean {
   const a = (actual || '').replace(/\s+/g, ' ').trim();
   const b = (expected || '').replace(/\s+/g, ' ').trim();
   return b.length === 0 || a.includes(b);
+}
+
+function isRichTextTarget(kind: string): boolean {
+  return kind === 'contenteditable' || kind === 'role=textbox';
+}
+
+function submitDisabledError(status: EditableStatus): string | undefined {
+  if (!isRichTextTarget(status.target_kind) || !status.submit_button_label || !status.submit_button_disabled) return undefined;
+  return `输入后“${status.submit_button_label}”按钮仍不可用，页面没有接受这次富文本输入`;
 }
 
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
@@ -434,19 +547,68 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     await new Promise((r) => setTimeout(r, 150));
     const actual = await readEditableText(tabId, args.ref_id);
     result = {
-      ok: normalizedIncludes(actual.actual_text, args.text),
+      ok: normalizedIncludes(actual.actual_text, args.text) && !actual.placeholder_visible && !submitDisabledError(actual),
       strategy: 'cdp_insertText',
       target_kind: actual.target_kind,
       actual_text: actual.actual_text,
       tried,
-      error: normalizedIncludes(actual.actual_text, args.text) ? undefined : result.error,
+      error: submitDisabledError(actual) || (normalizedIncludes(actual.actual_text, args.text) ? undefined : result.error),
     };
+  }
+
+  // Trusted-event 二级验证：即使 actual_text 包含期望文字，如果 placeholder 还在显示，
+  // 说明 React 受控编辑器的 internal state 没真正接受输入（DOM 有字但状态层为空），
+  // 提交按钮会保持 disabled。这里逐字 dispatchKeyEvent 重试，每个按键都是 trusted。
+  if (result.ok) {
+    const verify = await readEditableText(tabId, args.ref_id);
+    if (verify.placeholder_visible) {
+      tried.push('placeholder_still_visible_after_' + result.strategy);
+      // 用 CDP 键盘逐字输入，给编辑器真实的键盘事件。
+      tried.push('cdp_key_events_per_char');
+      // 先清空：选中全部 + Backspace
+      await cdp.pressKey(tabId, 'a', undefined, navigator.platform.includes('Mac') ? 4 : 2);
+      await cdp.pressKey(tabId, 'Backspace');
+      await cdp.typeTextByKeyEvents(tabId, args.text);
+      await new Promise((r) => setTimeout(r, 200));
+      const after = await readEditableText(tabId, args.ref_id);
+      result = {
+        ok: normalizedIncludes(after.actual_text, args.text) && !after.placeholder_visible && !submitDisabledError(after),
+        strategy: 'cdp_key_events_per_char',
+        target_kind: after.target_kind,
+        actual_text: after.actual_text,
+        tried,
+        error: submitDisabledError(after) || (after.placeholder_visible
+          ? '编辑器 placeholder 仍可见，internal state 未接受输入（React 受控编辑器拒绝了所有策略）'
+          : undefined),
+      };
+    }
+  }
+
+  if (result.ok) {
+    const status = await readEditableText(tabId, args.ref_id);
+    const blocked = submitDisabledError(status);
+    if (blocked) {
+      tried.push('submit_button_disabled_after_' + result.strategy);
+      // 某些富文本编辑器需要一次真实键盘编辑才会重新计算提交状态。
+      await cdp.typeTextByKeyEvents(tabId, ' ');
+      await cdp.pressKey(tabId, 'Backspace');
+      await new Promise((r) => setTimeout(r, 200));
+      const after = await readEditableText(tabId, args.ref_id);
+      result = {
+        ok: normalizedIncludes(after.actual_text, args.text) && !after.placeholder_visible && !submitDisabledError(after),
+        strategy: result.strategy + '+activation_nudge',
+        target_kind: after.target_kind,
+        actual_text: after.actual_text,
+        tried,
+        error: submitDisabledError(after) || blocked,
+      };
+    }
   }
 
   if (!result.ok) {
     const preview = (result.actual_text || '').slice(0, 160);
     throw new Error(
-      `输入失败：目标编辑器没有包含要输入的文本。target=${result.target_kind}; tried=${tried.join(', ')}; actual="${preview}"`,
+      `输入失败：${result.error || '目标编辑器没有包含要输入的文本'}。target=${result.target_kind}; tried=${tried.join(', ')}; actual="${preview}"`,
     );
   }
 
