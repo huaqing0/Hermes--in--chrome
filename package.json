@@ -1,0 +1,45 @@
+{
+  "name": "hermes-in-chrome",
+  "version": "0.1.0",
+  "description": "Hermes Agent 住在 Chrome 里 — 浏览器自动化扩展。Source-available under PolyForm Noncommercial 1.0.0.",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "花清",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huaqing0/hermes-in-chrome.git"
+  },
+  "bugs": {
+    "url": "https://github.com/huaqing0/hermes-in-chrome/issues"
+  },
+  "homepage": "https://github.com/huaqing0/hermes-in-chrome#readme",
+  "keywords": [
+    "chrome-extension",
+    "ai-agent",
+    "browser-automation",
+    "hermes",
+    "sidepanel",
+    "react",
+    "manifest-v3"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "marked": "^18.0.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.28",
+    "@types/chrome": "^0.0.275",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

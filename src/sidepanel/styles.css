@@ -1,0 +1,1607 @@
+/* ============================================================ */
+/* Hermes in Chrome · Sidepanel                                   */
+/* 完美复刻 cyber-dystopia.html + cyber-80s.html 两套 mockup       */
+/* ============================================================ */
+
+/* ============ Reset / Base ============ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+  font-variant-emoji: text;
+}
+#root { height: 100vh; }
+
+/* ============ Theme tokens ============ */
+[data-theme="dystopia"] {
+  --yellow: #fcee0a;
+  --yellow-soft: rgba(252, 238, 10, 0.3);
+  --yellow-bg: rgba(252, 238, 10, 0.08);
+  --red: #ff003c;
+  --cyan: #00f0ff;
+  --cyan-bg: rgba(0, 240, 255, 0.04);
+  --cyan-edge: rgba(0, 240, 255, 0.3);
+  --bg: #0a0a0c;
+  --panel: #15151a;
+  --text: #ffffff;
+  --text-muted: #999;
+  --text-dim: #666;
+
+  --f-display: 'Rajdhani', sans-serif;
+  --f-body: 'Rajdhani', sans-serif;
+  --f-mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --f-serif: 'Cormorant Garamond', serif;
+}
+
+[data-theme="synthwave"] {
+  --magenta: #ff00ff;
+  --cyan: #00ffff;
+  --sunset: #ff7e3a;
+  --grid-line: rgba(0, 255, 255, 0.18);
+  --bg-top: #1a0033;
+  --bg-bottom: #050015;
+  --text: #f0e7ff;
+  --text-muted: #c8b8e8;
+  --text-dim: #9a82c8;
+
+  --f-display: 'Orbitron', sans-serif;
+  --f-body: 'Inter', sans-serif;
+  --f-mono: 'VT323', 'JetBrains Mono', monospace;
+  --f-vt: 'VT323', monospace;
+}
+
+/* ============ Panel · 外层容器 ============ */
+.panel-wrap {
+  width: 100%;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: #000;
+  isolation: isolate;
+}
+
+/* ============ Hazard 4 条边（dystopia 专属） ============ */
+.hazard-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+  display: none;
+}
+[data-theme="dystopia"] .hazard-frame { display: block; }
+
+.hzd-bar {
+  position: absolute;
+  background: repeating-linear-gradient(
+    45deg,
+    #fcee0a 0, #fcee0a 14px,
+    #0a0a0c 14px, #0a0a0c 28px
+  );
+}
+.hzd-bar.top    { top: 0;    left: 0; right: 0; height: 12px; }
+.hzd-bar.bottom { bottom: 0; left: 0; right: 0; height: 12px; }
+.hzd-bar.left   { top: 0; bottom: 0; left: 0;  width: 12px; }
+.hzd-bar.right  { top: 0; bottom: 0; right: 0; width: 12px; }
+
+/* ============ Neon 动态霓虹边框（synthwave 专属） ============ */
+.neon-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+  display: none;
+}
+.neon-bar {
+  position: absolute;
+  pointer-events: none;
+}
+
+[data-theme="synthwave"] .neon-frame { display: block; }
+
+[data-theme="synthwave"] .neon-bar.top,
+[data-theme="synthwave"] .neon-bar.bottom {
+  left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg,
+    transparent 0%, transparent 20%,
+    var(--cyan) 40%, var(--magenta) 50%, var(--cyan) 60%,
+    transparent 80%, transparent 100%);
+  background-size: 50% 100%;
+  box-shadow: 0 0 8px var(--magenta), 0 0 16px rgba(0, 255, 255, 0.5);
+}
+[data-theme="synthwave"] .neon-bar.top    { top: 0;    animation: neon-flow-x 3.2s linear infinite; }
+[data-theme="synthwave"] .neon-bar.bottom { bottom: 0; animation: neon-flow-x 3.2s linear infinite reverse; }
+
+[data-theme="synthwave"] .neon-bar.left,
+[data-theme="synthwave"] .neon-bar.right {
+  top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(180deg,
+    transparent 0%, transparent 20%,
+    var(--magenta) 40%, var(--cyan) 50%, var(--magenta) 60%,
+    transparent 80%, transparent 100%);
+  background-size: 100% 50%;
+  box-shadow: 0 0 8px var(--cyan), 0 0 16px rgba(255, 0, 255, 0.5);
+}
+[data-theme="synthwave"] .neon-bar.left  { left: 0;  animation: neon-flow-y 3.8s linear infinite; }
+[data-theme="synthwave"] .neon-bar.right { right: 0; animation: neon-flow-y 3.8s linear infinite reverse; }
+
+@keyframes neon-flow-x {
+  from { background-position: -50% 0; }
+  to   { background-position: 150% 0; }
+}
+@keyframes neon-flow-y {
+  from { background-position: 0 -50%; }
+  to   { background-position: 0 150%; }
+}
+
+/* ============ Panel · 内层 ============ */
+.panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+[data-theme="dystopia"] .panel {
+  inset: 12px;
+  background: var(--bg);
+}
+
+[data-theme="synthwave"] .panel {
+  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+  box-shadow:
+    inset 0 0 0 1px var(--magenta),
+    inset 0 0 60px rgba(255, 0, 255, 0.08);
+}
+
+/* ============ Background layers ============ */
+.bg-grid,
+.bg-vignette,
+.bg-sun,
+.bg-floor,
+.bg-scan {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* Dystopia 网格 + vignette */
+[data-theme="dystopia"] .bg-grid {
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(252, 238, 10, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(252, 238, 10, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  z-index: 0;
+}
+[data-theme="dystopia"] .bg-vignette {
+  inset: 0;
+  background: radial-gradient(circle at 50% 30%, transparent 30%, rgba(0, 0, 0, 0.7) 100%);
+  z-index: 0;
+}
+[data-theme="dystopia"] .bg-sun,
+[data-theme="dystopia"] .bg-floor,
+[data-theme="dystopia"] .bg-scan { display: none; }
+
+/* Synthwave 落日 + 网格 + horizon + 扫描 */
+[data-theme="synthwave"] .bg-grid,
+[data-theme="synthwave"] .bg-vignette { display: none; }
+
+[data-theme="synthwave"] .bg-sun {
+  left: 50%; top: 30%;
+  width: 320px; height: 320px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--sunset) 0%, var(--magenta) 50%, transparent 70%);
+  opacity: 0.18;
+  filter: blur(8px);
+  z-index: 0;
+}
+[data-theme="synthwave"] .bg-sun::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: repeating-linear-gradient(
+    0deg, transparent 0, transparent 18px,
+    rgba(10, 0, 20, 0.8) 18px, rgba(10, 0, 20, 0.8) 22px
+  );
+  -webkit-mask: radial-gradient(circle, black 60%, transparent 70%);
+  mask: radial-gradient(circle, black 60%, transparent 70%);
+}
+[data-theme="synthwave"] .bg-floor {
+  left: -50%; right: -50%; bottom: -20%;
+  height: 60%;
+  transform: perspective(420px) rotateX(60deg);
+  transform-origin: bottom;
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 36px 28px;
+  z-index: 0;
+  opacity: 0.6;
+}
+[data-theme="synthwave"] .bg-floor::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(to bottom, transparent 0%, var(--bg-bottom) 80%);
+}
+[data-theme="synthwave"] .bg-scan {
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent 0, transparent 3px,
+    rgba(0, 0, 0, 0.15) 3px, rgba(0, 0, 0, 0.15) 4px
+  );
+  z-index: 50;
+  mix-blend-mode: multiply;
+}
+
+/* ============ Corner marks ============ */
+.corner-mark {
+  position: absolute;
+  width: 20px; height: 20px;
+  z-index: 6;
+  pointer-events: none;
+}
+.corner-mark::before,
+.corner-mark::after {
+  content: '';
+  position: absolute;
+}
+.corner-mark::before { left: 0; top: 0; width: 100%; height: 2px; }
+.corner-mark::after  { left: 0; top: 0; width: 2px; height: 100%; }
+.corner-mark.tl { left: 12px; top: 12px; }
+.corner-mark.tr { right: 12px; top: 12px; transform: scaleX(-1); }
+.corner-mark.bl { left: 12px; bottom: 12px; transform: scaleY(-1); }
+.corner-mark.br { right: 12px; bottom: 12px; transform: scale(-1, -1); }
+
+[data-theme="dystopia"] .corner-mark::before,
+[data-theme="dystopia"] .corner-mark::after {
+  background: var(--yellow);
+}
+[data-theme="synthwave"] .corner-mark::before,
+[data-theme="synthwave"] .corner-mark::after {
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0, 255, 255, 0.6);
+}
+
+/* ============ Content wrapper ============ */
+.content {
+  position: relative;
+  z-index: 5;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ============ Header ============ */
+.header {
+  padding: 22px 24px 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+[data-theme="dystopia"] .header { border-bottom: 1px solid var(--yellow-soft); }
+[data-theme="synthwave"] .header { border-bottom: 1px solid rgba(255, 0, 255, 0.3); }
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Avatar 外框（5 层结构内部不动） */
+.avatar {
+  width: 44px; height: 44px;
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: #000;
+}
+[data-theme="dystopia"] .avatar {
+  border: 2px solid var(--yellow);
+  clip-path: polygon(
+    0 30%, 30% 0, 70% 0, 100% 30%,
+    100% 70%, 70% 100%, 30% 100%, 0 70%
+  );
+  box-shadow: 0 0 0 1px rgba(252, 238, 10, 0.3);
+}
+[data-theme="synthwave"] .avatar {
+  border: 2px solid var(--magenta);
+  border-radius: 50%;
+  box-shadow:
+    0 0 12px var(--magenta),
+    inset 0 0 0 1px var(--cyan),
+    inset 0 0 12px rgba(0, 255, 255, 0.3);
+}
+
+.avatar .layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url('/icons/avatar.png');
+  background-size: cover;
+  background-position: center;
+}
+.avatar .layer.base {
+  filter: grayscale(1) contrast(1.55) brightness(0.78) sepia(0.15);
+  animation: avatar-strobe 4.8s steps(1) infinite;
+  z-index: 1;
+}
+.avatar .layer.ghost-cyan {
+  filter: grayscale(1) sepia(1) saturate(8) hue-rotate(155deg) brightness(0.95) contrast(1.4);
+  mix-blend-mode: screen;
+  transform: translateX(-1.5px);
+  opacity: 0.32;
+  animation: avatar-glitch-cyan 4.8s steps(1) infinite;
+  z-index: 2;
+}
+.avatar .layer.ghost-pink {
+  filter: grayscale(1) sepia(1) saturate(8) hue-rotate(300deg) brightness(0.85) contrast(1.4);
+  mix-blend-mode: screen;
+  transform: translateX(1.5px);
+  opacity: 0.32;
+  animation: avatar-glitch-pink 4.8s steps(1) infinite;
+  z-index: 3;
+}
+.avatar .layer.scanlines {
+  background-image: none;
+  background: repeating-linear-gradient(
+    0deg, transparent 0px, transparent 1.4px,
+    rgba(0, 0, 0, 0.55) 1.4px, rgba(0, 0, 0, 0.55) 2px
+  );
+  mix-blend-mode: multiply;
+  opacity: 0.45;
+  z-index: 4;
+}
+.avatar .layer.flash {
+  background-image: none;
+  opacity: 0;
+  mix-blend-mode: soft-light;
+  z-index: 5;
+  animation: avatar-flash 4.8s steps(1) infinite;
+}
+.avatar .id { display: none; }
+.avatar .pix { display: none; }
+
+/* Dystopia avatar 右下红三角 */
+[data-theme="dystopia"] .avatar::after {
+  content: '▾';
+  position: absolute;
+  bottom: 2px; right: 4px;
+  font-size: 9px;
+  color: var(--red);
+  z-index: 10;
+  font-family: var(--f-mono);
+}
+
+@keyframes avatar-glitch-cyan {
+  0%, 100% { transform: translateX(-1.5px); }
+  10% { transform: translate(-3px, -1px); }
+  11% { transform: translateX(-1.5px); }
+  68% { transform: translate(-2.5px, 1px); }
+  69% { transform: translateX(-1.5px); }
+}
+@keyframes avatar-glitch-pink {
+  0%, 100% { transform: translateX(1.5px); }
+  10% { transform: translate(3px, 1px); }
+  11% { transform: translateX(1.5px); }
+  68% { transform: translate(2.5px, -1px); }
+  69% { transform: translateX(1.5px); }
+}
+@keyframes avatar-strobe {
+  0%, 100% { opacity: 1; }
+  10%, 11% { opacity: 0.7; }
+  68%, 69% { opacity: 0.75; }
+  70% { opacity: 1; }
+}
+@keyframes avatar-flash {
+  0%, 100% { opacity: 0; background-color: transparent; }
+  11% { opacity: 0.18; background-color: var(--cyan); }
+  12% { opacity: 0; }
+  69% { opacity: 0.16; background-color: var(--magenta, var(--red)); }
+  70% { opacity: 0; }
+}
+
+/* AI avatar 小版 */
+.avatar.small {
+  width: 30px; height: 30px;
+}
+[data-theme="dystopia"] .avatar.small {
+  border-width: 1.5px;
+  clip-path: polygon(
+    0 30%, 30% 0, 70% 0, 100% 30%,
+    100% 70%, 70% 100%, 30% 100%, 0 70%
+  );
+}
+[data-theme="dystopia"] .avatar.small::after {
+  display: none;
+}
+[data-theme="synthwave"] .avatar.small {
+  border-width: 1.5px;
+  box-shadow:
+    0 0 6px var(--magenta),
+    inset 0 0 0 1px var(--cyan);
+}
+
+.logo-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.logo-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.18em;
+  line-height: 1;
+  color: var(--text);
+}
+[data-theme="synthwave"] .logo-name {
+  text-shadow:
+    0 0 4px var(--magenta),
+    0 0 12px rgba(255, 0, 255, 0.65),
+    -0.5px 0 0 var(--cyan),
+    0.5px 0 0 var(--magenta);
+}
+.logo-sub {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  font-weight: 500;
+}
+[data-theme="dystopia"] .logo-sub {
+  font-family: var(--f-serif);
+  font-style: italic;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--yellow);
+}
+[data-theme="synthwave"] .logo-sub {
+  font-family: var(--f-vt);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  color: var(--cyan);
+  text-shadow: 0 0 3px var(--cyan);
+}
+
+.logo-meta {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+.logo-meta .ver,
+.logo-meta .model { color: var(--text-muted); }
+.logo-meta .sep { opacity: 0.4; }
+.logo-meta .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.logo-meta .status .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+[data-theme="dystopia"] .logo-meta .status .dot {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red);
+}
+[data-theme="synthwave"] .logo-meta .status .dot {
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
+}
+.logo-meta .status.offline .dot { animation: none; opacity: 0.5; }
+@keyframes pulse { 50% { opacity: 0.4; } }
+
+/* ============ Icon buttons (header right) ============ */
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.icon-btn {
+  width: 28px; height: 28px;
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-family: var(--f-mono);
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+[data-theme="dystopia"] .icon-btn {
+  border: 1px solid rgba(252, 238, 10, 0.4);
+  color: var(--yellow);
+  clip-path: polygon(0 30%, 30% 0, 100% 0, 100% 70%, 70% 100%, 0 100%);
+}
+[data-theme="dystopia"] .icon-btn:hover { background: rgba(252, 238, 10, 0.1); }
+[data-theme="dystopia"] .icon-btn.active {
+  background: rgba(252, 238, 10, 0.15);
+}
+[data-theme="synthwave"] .icon-btn {
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  border-radius: 4px;
+  box-shadow: 0 0 4px rgba(0, 255, 255, 0.4);
+}
+[data-theme="synthwave"] .icon-btn:hover {
+  background: rgba(0, 255, 255, 0.12);
+  box-shadow: 0 0 10px var(--cyan);
+}
+[data-theme="synthwave"] .icon-btn.active {
+  background: rgba(255, 0, 255, 0.12);
+  border-color: var(--magenta);
+  color: var(--magenta);
+}
+.icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ============ SYSTEM bar (dystopia only) ============ */
+.system-bar {
+  display: none;
+}
+[data-theme="dystopia"] .system-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 24px 0;
+  padding: 6px 10px;
+  background: var(--yellow-bg);
+  border-left: 3px solid var(--yellow);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+.system-bar .hazard-mini {
+  width: 24px; height: 12px;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--yellow) 0, var(--yellow) 4px,
+    var(--bg) 4px, var(--bg) 8px
+  );
+  flex-shrink: 0;
+}
+
+/* ============ Tab row ============ */
+.tab-meta {
+  margin: 12px 24px 0;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+}
+.tab-meta::before { content: none; }
+.tab-meta .tab-fav {
+  width: 12px; height: 12px;
+  flex-shrink: 0;
+}
+.tab-meta .tab-url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.05em;
+}
+.tab-meta .tab-id {
+  flex-shrink: 0;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+[data-theme="dystopia"] .tab-meta {
+  background: rgba(252, 238, 10, 0.05);
+  border: 1px solid rgba(252, 238, 10, 0.3);
+  color: var(--text);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%);
+}
+[data-theme="dystopia"] .tab-meta .tab-fav { background: var(--cyan); }
+[data-theme="dystopia"] .tab-meta .tab-url { color: var(--cyan); }
+[data-theme="dystopia"] .tab-meta .tab-id { color: var(--text-dim); }
+
+[data-theme="synthwave"] .tab-meta {
+  background: rgba(0, 255, 255, 0.04);
+  border: 1px solid rgba(0, 255, 255, 0.4);
+  color: var(--cyan);
+  font-family: var(--f-vt);
+  font-size: 14px;
+}
+[data-theme="synthwave"] .tab-meta .tab-fav {
+  background: var(--magenta);
+  box-shadow: 0 0 4px var(--magenta);
+}
+[data-theme="synthwave"] .tab-meta .tab-url { color: var(--cyan); }
+[data-theme="synthwave"] .tab-meta .tab-id { color: var(--text-dim); font-size: 11px; }
+
+/* ============ Feed ============ */
+.feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
+  z-index: 5;
+}
+.feed-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  line-height: 1.8;
+}
+
+/* ============ Scrollbar ============ */
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+[data-theme="dystopia"] *::-webkit-scrollbar-thumb { background: rgba(252, 238, 10, 0.4); }
+[data-theme="dystopia"] *::-webkit-scrollbar-thumb:hover { background: var(--yellow); }
+[data-theme="synthwave"] *::-webkit-scrollbar-thumb { background: rgba(255, 0, 255, 0.4); }
+[data-theme="synthwave"] *::-webkit-scrollbar-thumb:hover { background: var(--magenta); }
+
+/* ============ Message wrap ============ */
+.msg-wrap {
+  display: flex;
+  position: relative;
+}
+.msg-wrap.user { justify-content: flex-end; }
+.msg-wrap.ai { flex-direction: column; }
+
+/* User bubble */
+.msg.user {
+  max-width: 82%;
+  padding: 10px 14px;
+  font-family: var(--f-body);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+[data-theme="dystopia"] .msg.user {
+  background: rgba(252, 238, 10, 0.10);
+  border: 1px solid var(--yellow);
+  clip-path: polygon(
+    0 0, 100% 0, 100% calc(100% - 10px),
+    calc(100% - 10px) 100%, 0 100%
+  );
+}
+[data-theme="synthwave"] .msg.user {
+  background: linear-gradient(135deg, rgba(255, 0, 255, 0.20), rgba(0, 255, 255, 0.10));
+  border: 1px solid var(--magenta);
+  font-family: var(--f-body);
+  font-size: 14px;
+  box-shadow: 0 0 10px rgba(255, 0, 255, 0.35);
+}
+
+/* AI block */
+.ai-block {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.ai-block.no-avatar { padding-left: 40px; }
+.ai-body { flex: 1; min-width: 0; color: var(--text); }
+.ai-body p,
+.ai-body li {
+  font-family: var(--f-body);
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+.ai-body p:last-child { margin-bottom: 0; }
+[data-theme="synthwave"] .ai-body p,
+[data-theme="synthwave"] .ai-body li {
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* Thinking */
+.msg.thinking {
+  margin-top: 8px;
+  padding: 10px 12px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  position: relative;
+  display: block;
+}
+[data-theme="dystopia"] .msg.thinking {
+  background: rgba(255, 0, 60, 0.05);
+  border-left: 3px solid var(--red);
+  color: var(--text-muted);
+}
+[data-theme="dystopia"] .msg.thinking::before {
+  content: '▸ THINKING.LOG';
+  display: block;
+  color: var(--red);
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  margin-bottom: 5px;
+}
+[data-theme="synthwave"] .msg.thinking {
+  background: rgba(255, 0, 255, 0.05);
+  border-left: 2px solid var(--magenta);
+  color: var(--text-muted);
+  font-family: var(--f-vt);
+  font-size: 13px;
+}
+[data-theme="synthwave"] .msg.thinking::before {
+  content: '▸ THINKING';
+  display: block;
+  color: var(--magenta);
+  font-family: var(--f-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  margin-bottom: 5px;
+  text-shadow: 0 0 3px var(--magenta);
+}
+
+/* ============ Tool group ============ */
+.tool-group {
+  margin-left: 40px;
+}
+.tool-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 4px;
+}
+.tool-chip::-webkit-details-marker { display: none; }
+.tool-chip::before { content: '◆ '; }
+[data-theme="dystopia"] .tool-chip {
+  color: var(--yellow);
+  background: rgba(252, 238, 10, 0.04);
+  border: 1px solid rgba(252, 238, 10, 0.3);
+}
+[data-theme="dystopia"] .tool-chip::before { color: var(--yellow); }
+[data-theme="synthwave"] .tool-chip {
+  color: var(--magenta);
+  background: rgba(255, 0, 255, 0.04);
+  border: 1px solid rgba(255, 0, 255, 0.4);
+  font-family: var(--f-display);
+}
+[data-theme="synthwave"] .tool-chip::before { color: var(--magenta); }
+
+.tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+}
+.tool-row .tool-num {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+.tool-row .tool-name {
+  color: var(--text);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.tool-row .tool-args {
+  flex: 1;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tool-row .tool-badge {
+  margin-left: auto;
+  padding: 2px 6px;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+.tool-row .tool-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+[data-theme="dystopia"] .tool-row {
+  background: var(--cyan-bg);
+  border: 1px solid var(--cyan-edge);
+  clip-path: polygon(
+    8px 0, 100% 0, 100% calc(100% - 8px),
+    calc(100% - 8px) 100%, 0 100%, 0 8px
+  );
+}
+[data-theme="dystopia"] .tool-row .tool-num { color: var(--cyan); }
+[data-theme="dystopia"] .tool-row .tool-args { color: var(--text-muted); }
+[data-theme="dystopia"] .tool-row .tool-badge.pending {
+  background: var(--yellow);
+  color: var(--bg);
+}
+[data-theme="dystopia"] .tool-row .tool-badge.ok {
+  background: var(--cyan);
+  color: var(--bg);
+}
+[data-theme="dystopia"] .tool-row .tool-badge.error {
+  background: var(--red);
+  color: #fff;
+}
+[data-theme="dystopia"] .tool-row .tool-toggle { color: var(--cyan); }
+
+[data-theme="synthwave"] .tool-row {
+  background: rgba(0, 255, 255, 0.04);
+  border: 1px dashed var(--cyan);
+  font-family: var(--f-vt);
+  font-size: 13px;
+}
+[data-theme="synthwave"] .tool-row::before {
+  content: '▸';
+  color: var(--magenta);
+  margin-right: 4px;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+[data-theme="synthwave"] .tool-row .tool-num {
+  color: var(--magenta);
+  font-family: var(--f-vt);
+  font-size: 12px;
+}
+[data-theme="synthwave"] .tool-row .tool-name {
+  color: var(--text);
+  font-family: var(--f-vt);
+  font-size: 14px;
+}
+[data-theme="synthwave"] .tool-row .tool-args {
+  color: var(--cyan);
+  font-family: var(--f-vt);
+  font-size: 12px;
+}
+[data-theme="synthwave"] .tool-row .tool-badge {
+  font-family: var(--f-display);
+  font-size: 8.5px;
+}
+[data-theme="synthwave"] .tool-row .tool-badge.pending {
+  background: var(--sunset); color: #fff;
+}
+[data-theme="synthwave"] .tool-row .tool-badge.ok {
+  background: var(--magenta); color: #fff;
+}
+[data-theme="synthwave"] .tool-row .tool-badge.error {
+  background: #ff3030; color: #fff;
+}
+
+.tool-result {
+  margin: 2px 22px 6px;
+  padding: 8px 10px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-muted);
+}
+[data-theme="dystopia"] .tool-result {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+}
+[data-theme="dystopia"] .tool-result.error {
+  background: rgba(255, 0, 60, 0.08);
+  border-color: rgba(255, 0, 60, 0.4);
+  color: var(--red);
+}
+[data-theme="synthwave"] .tool-result {
+  background: rgba(10, 0, 20, 0.6);
+  border: 1px dashed rgba(0, 255, 255, 0.3);
+}
+
+/* ============ Composer ============ */
+.composer {
+  padding: 12px 18px 14px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+}
+[data-theme="dystopia"] .composer { border-top: 1px solid rgba(252, 238, 10, 0.2); }
+[data-theme="synthwave"] .composer { border-top: 1px solid rgba(255, 0, 255, 0.25); }
+
+.input-wrap {
+  padding: 10px 12px;
+}
+[data-theme="dystopia"] .input-wrap {
+  background: rgba(252, 238, 10, 0.04);
+  border: 1px solid var(--yellow);
+  clip-path: polygon(
+    0 0, calc(100% - 12px) 0, 100% 12px,
+    100% 100%, 12px 100%, 0 calc(100% - 12px)
+  );
+}
+[data-theme="synthwave"] .input-wrap {
+  background: rgba(26, 0, 51, 0.6);
+  border: 1px solid var(--magenta);
+  box-shadow: 0 0 10px rgba(255, 0, 255, 0.4), inset 0 0 12px rgba(0, 255, 255, 0.06);
+}
+
+.composer textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  min-height: 44px;
+  max-height: 160px;
+  field-sizing: content;
+  overflow-y: auto;
+  font-family: var(--f-body);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.5;
+}
+.composer textarea::placeholder {
+  font-family: var(--f-mono);
+  letter-spacing: 0.1em;
+}
+[data-theme="dystopia"] .composer textarea {
+  caret-color: var(--yellow);
+}
+[data-theme="dystopia"] .composer textarea::placeholder {
+  color: rgba(252, 238, 10, 0.5);
+  font-size: 12px;
+}
+[data-theme="synthwave"] .composer textarea {
+  caret-color: var(--magenta);
+  font-family: var(--f-body);
+  font-size: 14px;
+}
+[data-theme="synthwave"] .composer textarea::placeholder {
+  color: rgba(154, 130, 200, 0.65);
+  font-family: var(--f-vt);
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 0;
+}
+.composer-modebar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+.toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: transparent;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.chip select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-family: var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: inherit;
+  outline: none;
+  cursor: pointer;
+  max-width: 180px;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.chip.mode select { max-width: 120px; }
+.chip.provider-chip { flex: 0 1 190px; }
+.chip.provider-chip select { width: 100%; max-width: 170px; }
+.chip.model-chip { flex: 0 1 250px; }
+.chip.model-chip select { width: 100%; max-width: 230px; }
+.chip .chip-caret { font-size: 8px; opacity: 0.6; }
+
+[data-theme="dystopia"] .chip {
+  border: 1px solid rgba(252, 238, 10, 0.4);
+  color: var(--yellow);
+}
+[data-theme="dystopia"] .chip:hover { background: rgba(252, 238, 10, 0.08); }
+[data-theme="dystopia"] .chip.mode {
+  background: rgba(252, 238, 10, 0.12);
+}
+[data-theme="dystopia"] .chip select option {
+  background: var(--bg); color: var(--text);
+  font-family: var(--f-mono); letter-spacing: 0; text-transform: none;
+}
+
+[data-theme="synthwave"] .chip {
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  border-radius: 2px;
+  font-family: var(--f-vt);
+  font-size: 12px;
+}
+[data-theme="synthwave"] .chip:hover { background: rgba(0, 255, 255, 0.08); }
+[data-theme="synthwave"] .chip.mode {
+  background: rgba(255, 0, 255, 0.12);
+  border-color: var(--magenta);
+  color: var(--magenta);
+}
+[data-theme="synthwave"] .chip select option {
+  background: var(--bg-top); color: var(--text);
+  font-family: var(--f-mono); letter-spacing: 0; text-transform: none;
+}
+
+/* Send / Stop */
+.send-fab {
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 14px;
+  height: 30px;
+  flex-shrink: 0;
+}
+[data-theme="dystopia"] .send-fab {
+  background: var(--yellow);
+  color: var(--bg);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  clip-path: polygon(
+    0 0, calc(100% - 8px) 0, 100% 50%,
+    calc(100% - 8px) 100%, 0 100%
+  );
+}
+[data-theme="dystopia"] .send-fab:hover:not(:disabled) { background: #ffff33; }
+[data-theme="dystopia"] .send-fab:disabled {
+  background: rgba(252, 238, 10, 0.2);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+[data-theme="synthwave"] .send-fab {
+  background: linear-gradient(135deg, var(--magenta), var(--sunset));
+  color: #fff;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  border-radius: 2px;
+  box-shadow: 0 0 10px var(--magenta);
+}
+[data-theme="synthwave"] .send-fab:hover:not(:disabled) {
+  box-shadow: 0 0 16px var(--magenta), 0 0 26px var(--sunset);
+}
+[data-theme="synthwave"] .send-fab:disabled {
+  background: rgba(40, 0, 80, 0.55);
+  color: var(--text-dim);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.send-fab .send-arrow { font-size: 11px; line-height: 1; }
+
+.stop-fab {
+  border: none;
+  cursor: pointer;
+  padding: 6px 14px;
+  height: 30px;
+  background: var(--red, #ff003c);
+  color: #fff;
+  font-family: var(--f-mono);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+[data-theme="dystopia"] .stop-fab {
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+
+/* ============ History panel ============ */
+.history-panel {
+  margin: 10px 24px 0;
+  max-height: 220px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+[data-theme="dystopia"] .history-panel {
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid var(--cyan-edge);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+[data-theme="synthwave"] .history-panel {
+  background: rgba(26, 0, 51, 0.85);
+  border: 1px solid var(--cyan);
+  box-shadow: 0 0 12px rgba(0, 255, 255, 0.3);
+}
+.history-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+}
+[data-theme="dystopia"] .history-head {
+  color: var(--cyan);
+  border-bottom: 1px solid var(--cyan-edge);
+}
+[data-theme="synthwave"] .history-head {
+  color: var(--cyan);
+  border-bottom: 1px dashed var(--cyan);
+}
+.history-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.history-item {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-top: 1px solid transparent;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--f-body);
+}
+.history-item:hover { background: rgba(255, 255, 255, 0.04); }
+.history-item.current {
+  background: rgba(252, 238, 10, 0.08);
+}
+[data-theme="synthwave"] .history-item.current { background: rgba(255, 0, 255, 0.1); }
+.history-title { font-size: 12px; }
+.history-meta { font-size: 9px; color: var(--text-muted); font-family: var(--f-mono); margin-top: 2px; }
+.history-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--f-mono);
+}
+
+/* ============ Model settings panel ============ */
+.settings-panel {
+  margin: 10px 24px 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 60vh;
+}
+[data-theme="dystopia"] .settings-panel {
+  background: rgba(0, 0, 0, 0.84);
+  border: 1px solid rgba(252, 238, 10, 0.45);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+[data-theme="synthwave"] .settings-panel {
+  background: rgba(26, 0, 51, 0.88);
+  border: 1px solid var(--magenta);
+  box-shadow: 0 0 14px rgba(255, 0, 255, 0.28);
+}
+.settings-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.settings-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-close {
+  width: 22px; height: 22px;
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid; place-items: center;
+  padding: 0;
+}
+.settings-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+[data-theme="dystopia"] .settings-head {
+  color: var(--yellow);
+  border-bottom: 1px solid rgba(252, 238, 10, 0.32);
+}
+[data-theme="synthwave"] .settings-head {
+  color: var(--magenta);
+  border-bottom: 1px dashed var(--magenta);
+}
+.settings-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.settings-field {
+  display: grid;
+  gap: 4px;
+}
+.settings-field span,
+.settings-note,
+.settings-state {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.settings-field input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  padding: 7px 9px;
+  outline: none;
+  font-family: var(--f-mono);
+  font-size: 11px;
+}
+.settings-field input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.settings-note {
+  line-height: 1.5;
+}
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-state {
+  flex: 1;
+}
+.settings-state.on {
+  color: var(--green);
+}
+.settings-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: var(--text);
+  padding: 5px 9px;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: 10px;
+}
+.settings-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ============ Approval card ============ */
+.approval-card {
+  margin: 10px 0 10px 40px;
+  padding: 10px 12px;
+  font-family: var(--f-body);
+}
+[data-theme="dystopia"] .approval-card {
+  background: rgba(255, 0, 60, 0.06);
+  border: 1px solid var(--red);
+  border-left: 3px solid var(--red);
+}
+[data-theme="synthwave"] .approval-card {
+  background: rgba(255, 126, 58, 0.08);
+  border: 1px solid var(--sunset);
+}
+.approval-title {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--red);
+  margin-bottom: 4px;
+}
+.approval-title .tool-tag {
+  margin-left: 8px;
+  color: var(--text);
+  font-family: var(--f-mono);
+}
+.approval-args {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  word-break: break-all;
+  max-height: 140px;
+  overflow: auto;
+}
+.approval-actions { display: flex; gap: 6px; }
+.approval-btn {
+  padding: 4px 14px;
+  font-family: var(--f-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  border: none;
+  cursor: pointer;
+}
+[data-theme="dystopia"] .approval-btn.allow { background: var(--yellow); color: var(--bg); }
+[data-theme="dystopia"] .approval-btn.deny { background: var(--red); color: #fff; }
+[data-theme="synthwave"] .approval-btn.allow { background: var(--magenta); color: #fff; }
+[data-theme="synthwave"] .approval-btn.deny { background: #ff3030; color: #fff; }
+
+/* ============ Copy button ============ */
+.copy-btn {
+  position: absolute;
+  top: 0; right: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  padding: 2px 6px;
+  transition: opacity 0.15s;
+}
+.msg-wrap:hover .copy-btn { opacity: 0.7; }
+.copy-btn:hover { opacity: 1; }
+.copy-btn.copied { opacity: 1; color: var(--cyan); }
+
+/* ============ Markdown body ============ */
+.ai-body.md h1,
+.ai-body.md h2,
+.ai-body.md h3 {
+  font-family: var(--f-display);
+  font-weight: 700;
+  margin: 8px 0 6px;
+}
+.ai-body.md h1 { font-size: 18px; }
+.ai-body.md h2 { font-size: 16px; }
+.ai-body.md h3 { font-size: 14px; }
+.ai-body.md strong { font-weight: 700; }
+[data-theme="dystopia"] .ai-body.md strong { color: var(--yellow); }
+[data-theme="synthwave"] .ai-body.md strong { color: var(--cyan); }
+.ai-body.md code {
+  font-family: var(--f-mono);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1px 5px;
+  font-size: 12px;
+}
+.ai-body.md pre {
+  font-family: var(--f-mono);
+  background: rgba(0, 0, 0, 0.6);
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 11.5px;
+  margin: 6px 0;
+}
+.ai-body.md pre code { background: transparent; padding: 0; }
+.ai-body.md a { color: var(--cyan); text-decoration: underline; }
+.ai-body.md ul,
+.ai-body.md ol { margin: 4px 0 8px; padding-left: 20px; }
+.ai-body.md blockquote {
+  border-left: 2px solid var(--text-muted);
+  padding-left: 10px;
+  margin: 6px 0;
+  color: var(--text-muted);
+}
+.ai-body.md hr { border: none; border-top: 1px solid var(--text-dim); margin: 10px 0; }
+
+/* ============ Provider 配置 UI (settings panel 内) ============ */
+.provider-banner {
+  margin: 8px 16px 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  position: relative;
+  z-index: 6;
+}
+.provider-banner > span { flex: 1; }
+.provider-banner button {
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  padding: 0 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+[data-theme="dystopia"] .provider-banner {
+  background: rgba(255, 0, 60, 0.08);
+  border: 1px solid var(--red);
+  color: var(--red);
+}
+[data-theme="synthwave"] .provider-banner {
+  background: rgba(255, 126, 58, 0.1);
+  border: 1px solid var(--sunset);
+  color: var(--sunset);
+}
+
+.provider-status {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+}
+.provider-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.provider-status-row .provider-status-msg {
+  flex: 1;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.provider-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.provider-dot.on { background: #5ddc8f; box-shadow: 0 0 6px #5ddc8f; }
+.provider-dot.off { background: var(--text-dim); }
+.provider-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.provider-actions button,
+.provider-status-row button {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 4px 10px;
+  cursor: pointer;
+  background: transparent;
+}
+[data-theme="dystopia"] .provider-actions button,
+[data-theme="dystopia"] .provider-status-row button {
+  border: 1px solid var(--yellow);
+  color: var(--yellow);
+}
+[data-theme="dystopia"] .provider-actions button:hover,
+[data-theme="dystopia"] .provider-status-row button:hover {
+  background: rgba(252, 238, 10, 0.08);
+}
+[data-theme="synthwave"] .provider-actions button,
+[data-theme="synthwave"] .provider-status-row button {
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+}
+[data-theme="synthwave"] .provider-actions button:hover,
+[data-theme="synthwave"] .provider-status-row button:hover {
+  background: rgba(0, 255, 255, 0.08);
+}
+
+.oauth-card {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+}
+[data-theme="dystopia"] .oauth-card {
+  background: rgba(0, 240, 255, 0.05);
+  border: 1px solid var(--cyan-edge);
+}
+[data-theme="synthwave"] .oauth-card {
+  background: rgba(255, 0, 255, 0.05);
+  border: 1px dashed var(--magenta);
+}
+.oauth-title {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--text);
+}
+.oauth-code {
+  display: flex; align-items: center; gap: 8px;
+}
+.oauth-code-label { color: var(--text-muted); font-size: 9px; letter-spacing: 0.18em; }
+.oauth-code code {
+  padding: 2px 8px;
+  font-size: 14px;
+  letter-spacing: 0.15em;
+}
+[data-theme="dystopia"] .oauth-code code {
+  background: rgba(252, 238, 10, 0.12);
+  color: var(--yellow);
+}
+[data-theme="synthwave"] .oauth-code code {
+  background: rgba(0, 255, 255, 0.12);
+  color: var(--cyan);
+}
+.oauth-url {
+  word-break: break-all;
+  font-size: 10px;
+}
+.oauth-url a { color: inherit; text-decoration: underline; }
+[data-theme="dystopia"] .oauth-url a { color: var(--cyan); }
+[data-theme="synthwave"] .oauth-url a { color: var(--cyan); }
+.oauth-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.oauth-hint {
+  flex: 1;
+  font-size: 10px;
+  color: var(--text-muted);
+}

@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.vite/
+release/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.~lock.*
+
+# OS
+Thumbs.db

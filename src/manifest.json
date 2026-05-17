@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Hermes in Chrome",
+  "version": "0.1.0",
+  "description": "Hermes Agent 住在 Chrome 里 — 浏览器自动化扩展",
+  "minimum_chrome_version": "116",
+  "action": {
+    "default_title": "打开 Hermes 侧边栏",
+    "default_icon": {
+      "16": "public/icons/icon-16.png",
+      "32": "public/icons/icon-32.png",
+      "48": "public/icons/icon-48.png",
+      "128": "public/icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "public/icons/icon-16.png",
+    "32": "public/icons/icon-32.png",
+    "48": "public/icons/icon-48.png",
+    "128": "public/icons/icon-128.png"
+  },
+  "background": { "service_worker": "src/background/index.ts", "type": "module" },
+  "side_panel": { "default_path": "src/sidepanel/index.html" },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "activeTab",
+    "scripting",
+    "debugger",
+    "tabGroups",
+    "tabs",
+    "alarms",
+    "notifications",
+    "webNavigation",
+    "offscreen",
+    "downloads",
+    "unlimitedStorage"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/a11y-tree.ts"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/visual-indicator.ts"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "commands": {
+    "toggle-side-panel": {
+      "description": "切换 Hermes 侧边栏",
+      "suggested_key": { "default": "Ctrl+H", "mac": "Command+H" }
+    }
+  }
+}
