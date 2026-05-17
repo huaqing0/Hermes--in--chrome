@@ -204,10 +204,10 @@ async function pageTypeAttempt(tabId: number, refId: string | undefined, text: s
         return (value || '').replace(/\s+/g, ' ').trim();
       }
 
-      function containsExpected(actual: string): boolean {
+      function matchesExpected(actual: string): boolean {
         const a = normalize(actual);
         const b = normalize(inputText);
-        return b.length === 0 || a.includes(b);
+        return b.length === 0 || a === b;
       }
 
       function refElement(): Element | null {
@@ -356,7 +356,7 @@ async function pageTypeAttempt(tabId: number, refId: string | undefined, text: s
         else target.value = inputText;
         dispatchInputEvents(target);
         const actual = readText(target);
-        if (containsExpected(actual)) {
+        if (matchesExpected(actual)) {
           return { ok: true, strategy: 'native_value_setter', target_kind: targetKind(target), actual_text: actual, tried };
         }
       }
@@ -368,7 +368,7 @@ async function pageTypeAttempt(tabId: number, refId: string | undefined, text: s
         document.execCommand('insertText', false, inputText);
       } catch {}
       let actual = readText(target);
-      if (containsExpected(actual)) {
+      if (matchesExpected(actual)) {
         return { ok: true, strategy: 'execCommand_insertText', target_kind: targetKind(target), actual_text: actual, tried };
       }
 
@@ -379,7 +379,7 @@ async function pageTypeAttempt(tabId: number, refId: string | undefined, text: s
         target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
       } catch {}
       actual = readText(target);
-      if (containsExpected(actual)) {
+      if (matchesExpected(actual)) {
         return { ok: true, strategy: 'paste_event', target_kind: targetKind(target), actual_text: actual, tried };
       }
 
@@ -511,10 +511,24 @@ async function readEditableText(tabId: number, refId?: string): Promise<Editable
   );
 }
 
-function normalizedIncludes(actual: string, expected: string): boolean {
+function normalizedEquals(actual: string, expected: string): boolean {
   const a = (actual || '').replace(/\s+/g, ' ').trim();
   const b = (expected || '').replace(/\s+/g, ' ').trim();
-  return b.length === 0 || a.includes(b);
+  return b.length === 0 || a === b;
+}
+
+function repeatedExpectedCount(actual: string, expected: string): number {
+  const a = (actual || '').replace(/\s+/g, ' ').trim();
+  const b = (expected || '').replace(/\s+/g, ' ').trim();
+  if (!a || !b) return 0;
+  let count = 0;
+  let index = 0;
+  while (true) {
+    const next = a.indexOf(b, index);
+    if (next === -1) return count;
+    count += 1;
+    index = next + b.length;
+  }
 }
 
 function isRichTextTarget(kind: string): boolean {
@@ -524,6 +538,21 @@ function isRichTextTarget(kind: string): boolean {
 function submitDisabledError(status: EditableStatus): string | undefined {
   if (!isRichTextTarget(status.target_kind) || !status.submit_button_label || !status.submit_button_disabled) return undefined;
   return `输入后“${status.submit_button_label}”按钮仍不可用，页面没有接受这次富文本输入`;
+}
+
+function typedTextError(status: EditableStatus, expected: string): string | undefined {
+  if (normalizedEquals(status.actual_text, expected)) return undefined;
+  const repeats = repeatedExpectedCount(status.actual_text, expected);
+  if (repeats > 1) return `输入内容重复了 ${repeats} 次，已阻止继续提交`;
+  return '目标编辑器内容与要输入的文本不一致';
+}
+
+async function clearFocusedEditableWithKeyboard(tabId: number, tried: string[]) {
+  tried.push('cdp_select_all_clear');
+  const modifier = /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? 4 : 2;
+  await cdp.pressKey(tabId, 'a', undefined, modifier);
+  await cdp.pressKey(tabId, 'Backspace');
+  await new Promise((r) => setTimeout(r, 120));
 }
 
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
@@ -542,17 +571,21 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
   tried.push(...result.tried);
 
   if (!result.ok) {
+    if (isRichTextTarget(result.target_kind)) {
+      await clearFocusedEditableWithKeyboard(tabId, tried);
+    }
     tried.push('cdp_insertText');
     await cdp.insertText(tabId, args.text);
     await new Promise((r) => setTimeout(r, 150));
     const actual = await readEditableText(tabId, args.ref_id);
+    const typedError = typedTextError(actual, args.text);
     result = {
-      ok: normalizedIncludes(actual.actual_text, args.text) && !actual.placeholder_visible && !submitDisabledError(actual),
+      ok: !typedError && !actual.placeholder_visible && !submitDisabledError(actual),
       strategy: 'cdp_insertText',
       target_kind: actual.target_kind,
       actual_text: actual.actual_text,
       tried,
-      error: submitDisabledError(actual) || (normalizedIncludes(actual.actual_text, args.text) ? undefined : result.error),
+      error: submitDisabledError(actual) || typedError || result.error,
     };
   }
 
@@ -565,19 +598,18 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       tried.push('placeholder_still_visible_after_' + result.strategy);
       // 用 CDP 键盘逐字输入，给编辑器真实的键盘事件。
       tried.push('cdp_key_events_per_char');
-      // 先清空：选中全部 + Backspace
-      await cdp.pressKey(tabId, 'a', undefined, navigator.platform.includes('Mac') ? 4 : 2);
-      await cdp.pressKey(tabId, 'Backspace');
+      await clearFocusedEditableWithKeyboard(tabId, tried);
       await cdp.typeTextByKeyEvents(tabId, args.text);
       await new Promise((r) => setTimeout(r, 200));
       const after = await readEditableText(tabId, args.ref_id);
+      const typedError = typedTextError(after, args.text);
       result = {
-        ok: normalizedIncludes(after.actual_text, args.text) && !after.placeholder_visible && !submitDisabledError(after),
+        ok: !typedError && !after.placeholder_visible && !submitDisabledError(after),
         strategy: 'cdp_key_events_per_char',
         target_kind: after.target_kind,
         actual_text: after.actual_text,
         tried,
-        error: submitDisabledError(after) || (after.placeholder_visible
+        error: submitDisabledError(after) || typedError || (after.placeholder_visible
           ? '编辑器 placeholder 仍可见，internal state 未接受输入（React 受控编辑器拒绝了所有策略）'
           : undefined),
       };
@@ -594,13 +626,14 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       await cdp.pressKey(tabId, 'Backspace');
       await new Promise((r) => setTimeout(r, 200));
       const after = await readEditableText(tabId, args.ref_id);
+      const typedError = typedTextError(after, args.text);
       result = {
-        ok: normalizedIncludes(after.actual_text, args.text) && !after.placeholder_visible && !submitDisabledError(after),
+        ok: !typedError && !after.placeholder_visible && !submitDisabledError(after),
         strategy: result.strategy + '+activation_nudge',
         target_kind: after.target_kind,
         actual_text: after.actual_text,
         tried,
-        error: submitDisabledError(after) || blocked,
+        error: submitDisabledError(after) || typedError || blocked,
       };
     }
   }
