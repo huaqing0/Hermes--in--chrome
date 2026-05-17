@@ -241,9 +241,10 @@ TOOLS: list[tuple[str, str, dict]] = [
         {
             "name": "ext_type",
             "description": (
-                "在输入框/富文本框输入文本，并验证页面真实内容已经包含该文本。"
+                "在输入框/富文本框输入文本，并验证页面真实内容精确等于该文本。"
+                "工具会锁定当前输入作用域；若验证失败，会尝试回滚本次残留输入。"
                 "可选 submit=true 只会在验证成功后自动按 Enter。"
-                "若返回错误或 verified 不是 true，不要继续点击发布/发送。"
+                "若返回错误或 verified 不是 true，必须重新读取页面，不要换 ref_id 盲目重试，更不要继续点击发布/发送。"
             ),
             "parameters": {
                 "type": "object",
@@ -489,7 +490,7 @@ EXTRA_SYSTEM_PROMPT = """\
 - ext_read_page(ref_id?, depth?, filter?) — 读当前页 a11y 树，拿可点击元素的 ref_id
 - ext_find(query) — 在大页面里按自然语言找候选 ref_id，再 click/type
 - ext_click(ref_id) — 真实点击
-- ext_type(ref_id, text, submit?) — 输入文本，并验证页面真实内容；只有 verified=true 才能继续提交
+- ext_type(ref_id, text, submit?) — 原子输入文本，并验证当前输入作用域内内容精确等于目标文本；只有 verified=true 才能继续提交
 - ext_key(key) — 按键盘快捷键，如 'Enter'、'Meta+Enter'（Mac Cmd+Enter）、'Ctrl+Enter'
 - ext_browser_batch(actions) — 批量执行多个可预测浏览器动作，减少 round-trip
 - ext_scroll / ext_scroll_to / ext_screenshot / ext_wait / ext_get_console_logs
@@ -500,8 +501,8 @@ EXTRA_SYSTEM_PROMPT = """\
 - 用户说「查/告诉我 X」→ 倾向 web_search 或 ext_fetch_url
 - 搜索引擎结果页是 SPA，fetch_url 拿不到，用 web_search 或浏览器路径
 - YouTube/Twitter/Notion 等 SPA 必须走浏览器（ext_navigate + ext_read_page + ext_click）
-- **X/Twitter 发帖**：ext_navigate("https://x.com/compose/post") → ext_read_page(filter="interactive") → ext_type(ref_id=帖子文本, text=...)。只有 ext_type 返回 verified=true 后才能 ext_key(key='Meta+Enter') 或点击“发帖/全部发帖”。如果 ext_type 报错或 verified 不是 true，必须重新定位文本框，禁止提交空帖子。ext_key 只代表按键已发送，不代表发布成功；按下后必须 ext_wait(1000-3000) + ext_read_page 复查：弹窗关闭、新帖出现在时间线/个人页，才可以说发布成功。如果弹窗仍存在或发帖按钮仍不可用，必须告诉用户没有发布成功。只能点击明确叫“发帖”或“全部发帖”的按钮；“添加帖子”是添加 thread 的第二条，不是发布；“下一步”通常不是最终发布。不要反复重复输入同一段文字。
-- **YouTube 评论**：先点击评论框 → ext_read_page(filter="interactive") → ext_type(ref_id=评论文本框, text=...)。只有 verified=true 后才能点击“评论”/“Comment”；否则重新找 textbox，禁止提交空评论。点击后必须 ext_wait + ext_read_page 复查评论是否出现，不能只因为点击成功就报告成功。
+- **X/Twitter 发帖**：ext_navigate("https://x.com/compose/post") → ext_read_page(filter="interactive") → ext_type(ref_id=帖子文本, text=...)。只有 ext_type 返回 verified=true，且 actual_text_preview 精确等于用户要发的文本后，才能 ext_key(key='Meta+Enter') 或点击“发帖/全部发帖”。如果 ext_type 报错或 verified 不是 true，必须 ext_read_page 重新观察页面，不能直接换另一个“帖子文本” ref_id 盲重试，更不能提交。ext_key 只代表按键已发送，不代表发布成功；按下后必须 ext_wait(1000-3000) + ext_read_page 复查：弹窗关闭、新帖出现在时间线/个人页，才可以说发布成功。如果弹窗仍存在、发帖按钮仍不可用、或草稿文本与用户文本不完全一致，必须告诉用户没有发布成功。只能点击明确叫“发帖”或“全部发帖”的按钮；“添加帖子”是添加 thread 的第二条，不是发布；“下一步”通常不是最终发布。不要反复重复输入同一段文字。
+- **YouTube 评论**：先点击评论框 → ext_read_page(filter="interactive") → ext_type(ref_id=评论文本框, text=...)。只有 verified=true，且 actual_text_preview 精确等于用户评论文本后，才能点击“评论”/“Comment”；否则重新读页面，禁止提交空评论或重复评论。点击后必须 ext_wait + ext_read_page 复查评论是否出现，不能只因为点击成功就报告成功。
 
 # 严格按字面理解
 - 「最早 / 第一支 / first / oldest」→ 按时间最远那个，不是最新

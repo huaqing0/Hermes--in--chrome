@@ -17,22 +17,33 @@ type TypeResult = {
   verified: true;
   strategy: string;
   target_kind: string;
+  scope_kind: string;
+  submit_button_disabled: false;
   actual_text_preview: string;
 };
-type PageTypeAttempt = {
-  ok: boolean;
-  strategy: string;
-  target_kind: string;
-  actual_text: string;
-  error?: string;
-  tried: string[];
-};
 type EditableStatus = {
+  ok: boolean;
   target_kind: string;
+  scope_kind: string;
   actual_text: string;
+  residue_preview: string;
   placeholder_visible: boolean;
   submit_button_label?: string;
   submit_button_disabled?: boolean;
+  error?: string;
+  rollback?: boolean;
+  tried: string[];
+};
+type EditableSnapshot = { index: number; text: string; target: boolean };
+type AtomicTypePreparation = {
+  ok: boolean;
+  token: string;
+  target_kind: string;
+  scope_kind: string;
+  actual_text: string;
+  snapshots: EditableSnapshot[];
+  tried: string[];
+  error?: string;
 };
 
 /** 把 session 绑定到一个 tab（首次发消息时调用） */
@@ -182,335 +193,6 @@ async function clickRef(sessionId: string, args: { ref_id: string }) {
   return { clicked: args.ref_id, x, y };
 }
 
-async function pageTypeAttempt(tabId: number, refId: string | undefined, text: string): Promise<PageTypeAttempt> {
-  return runInPage<PageTypeAttempt>(
-    tabId,
-    (targetRef, inputText) => {
-      const tried: string[] = [];
-      const editableSelector = [
-        'textarea',
-        'input:not([type])',
-        'input[type="text"]',
-        'input[type="search"]',
-        'input[type="email"]',
-        'input[type="url"]',
-        'input[type="tel"]',
-        '[contenteditable="true"]',
-        '[contenteditable="plaintext-only"]',
-        '[role="textbox"]',
-      ].join(',');
-
-      function normalize(value: string | null | undefined): string {
-        return (value || '').replace(/\s+/g, ' ').trim();
-      }
-
-      function matchesExpected(actual: string): boolean {
-        const a = normalize(actual);
-        const b = normalize(inputText);
-        return b.length === 0 || a === b;
-      }
-
-      function refElement(): Element | null {
-        if (!targetRef) {
-          return document.activeElement instanceof Element ? document.activeElement : null;
-        }
-        const ref = window.__hermesElementMap?.[targetRef];
-        const node = ref && ref.deref ? ref.deref() : null;
-        return node instanceof Element ? node : null;
-      }
-
-      function isEditable(el: Element | null): el is HTMLElement | HTMLInputElement | HTMLTextAreaElement {
-        if (!el) return false;
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return true;
-        if (el instanceof HTMLElement && el.isContentEditable) return true;
-        return el.getAttribute('role') === 'textbox';
-      }
-
-      function scoreCandidate(el: Element): number {
-        if (el instanceof HTMLTextAreaElement) return 10;
-        if (el instanceof HTMLInputElement) return 9;
-        if (el instanceof HTMLElement && el.isContentEditable) return 8;
-        if (el.getAttribute('role') === 'textbox') return 7;
-        return 0;
-      }
-
-      function resolveEditable(): Element | null {
-        const base = refElement();
-        if (isEditable(base)) return base;
-        const candidates: Element[] = [];
-        if (base) {
-          candidates.push(...Array.from(base.querySelectorAll(editableSelector)));
-          const closest = base.closest(editableSelector);
-          if (closest) candidates.push(closest);
-        }
-        if (document.activeElement instanceof Element) {
-          if (isEditable(document.activeElement)) candidates.push(document.activeElement);
-          candidates.push(...Array.from(document.activeElement.querySelectorAll?.(editableSelector) || []));
-        }
-        candidates.push(...Array.from(document.querySelectorAll(editableSelector)));
-        const visible = candidates
-          .filter((el, index, arr) => arr.indexOf(el) === index)
-          .filter((el) => {
-            const r = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-          })
-          .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
-        return visible[0] || null;
-      }
-
-      function targetKind(el: Element | null): string {
-        if (!el) return 'none';
-        if (el instanceof HTMLTextAreaElement) return 'textarea';
-        if (el instanceof HTMLInputElement) return `input:${el.type || 'text'}`;
-        if (el instanceof HTMLElement && el.isContentEditable) return 'contenteditable';
-        if (el.getAttribute('role') === 'textbox') return 'role=textbox';
-        return el.tagName.toLowerCase();
-      }
-
-      function readText(el: Element | null): string {
-        if (!el) return '';
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value || '';
-        const aria = el.getAttribute('aria-label') || '';
-        const text = (el as HTMLElement).innerText || el.textContent || '';
-        return text || aria;
-      }
-
-      function dispatchInputEvents(el: Element, inputType = 'insertText') {
-        try {
-          el.dispatchEvent(new InputEvent('beforeinput', {
-            bubbles: true,
-            cancelable: true,
-            inputType,
-            data: inputText,
-          }));
-        } catch {}
-        try {
-          el.dispatchEvent(new InputEvent('input', {
-            bubbles: true,
-            inputType,
-            data: inputText,
-          }));
-        } catch {
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-
-      function focusTarget(el: Element) {
-        (el as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'center' });
-        (el as HTMLElement).focus?.();
-      }
-
-      function clearTarget(el: Element) {
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-          if (setter) setter.call(el, '');
-          else el.value = '';
-          dispatchInputEvents(el, 'deleteContentBackward');
-          return;
-        }
-        if (el instanceof HTMLElement) {
-          const sel = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-          if (!document.execCommand('delete')) {
-            el.textContent = '';
-          }
-          dispatchInputEvents(el, 'deleteContentBackward');
-        }
-      }
-
-      const target = resolveEditable();
-      if (!target) {
-        return { ok: false, strategy: 'none', target_kind: 'none', actual_text: '', error: 'No editable target found', tried };
-      }
-
-      focusTarget(target);
-      clearTarget(target);
-
-      // contenteditable / role=textbox 一般是 React 受控编辑器（Draft.js / Slate / Lexical /
-      // ProseMirror）— 它们检查 InputEvent.isTrusted，会拒绝合成事件，导致 DOM 写入但
-      // internal state 不更新（placeholder 不消失、提交按钮不亮）。这里直接跳过 DOM 策略，
-      // 让外层 typeText 走 CDP Input.insertText（trusted event）。
-      if (target instanceof HTMLElement && !(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)
-          && (target.isContentEditable || target.getAttribute('role') === 'textbox')) {
-        tried.push('skipped_dom_for_contenteditable');
-        return {
-          ok: false,
-          strategy: 'skipped_dom_for_contenteditable',
-          target_kind: targetKind(target),
-          actual_text: readText(target),
-          tried,
-        };
-      }
-
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        tried.push('native_value_setter');
-        const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-        if (setter) setter.call(target, inputText);
-        else target.value = inputText;
-        dispatchInputEvents(target);
-        const actual = readText(target);
-        if (matchesExpected(actual)) {
-          return { ok: true, strategy: 'native_value_setter', target_kind: targetKind(target), actual_text: actual, tried };
-        }
-      }
-
-      tried.push('execCommand_insertText');
-      focusTarget(target);
-      try {
-        document.execCommand('selectAll', false);
-        document.execCommand('insertText', false, inputText);
-      } catch {}
-      let actual = readText(target);
-      if (matchesExpected(actual)) {
-        return { ok: true, strategy: 'execCommand_insertText', target_kind: targetKind(target), actual_text: actual, tried };
-      }
-
-      tried.push('paste_event');
-      try {
-        const data = new DataTransfer();
-        data.setData('text/plain', inputText);
-        target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
-      } catch {}
-      actual = readText(target);
-      if (matchesExpected(actual)) {
-        return { ok: true, strategy: 'paste_event', target_kind: targetKind(target), actual_text: actual, tried };
-      }
-
-      return {
-        ok: false,
-        strategy: 'dom_attempts_failed',
-        target_kind: targetKind(target),
-        actual_text: actual,
-        error: 'DOM input strategies did not update the target',
-        tried,
-      };
-    },
-    [refId ?? null, text],
-  );
-}
-
-async function readEditableText(tabId: number, refId?: string): Promise<EditableStatus> {
-  return runInPage(
-    tabId,
-    (targetRef) => {
-      const ref = targetRef ? window.__hermesElementMap?.[targetRef] : null;
-      const base = ref && ref.deref ? ref.deref() : document.activeElement;
-      const editable = base instanceof Element
-        ? (base.matches('textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]')
-            ? base
-            : base.querySelector('textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]') || document.activeElement)
-        : document.activeElement;
-      const el = editable instanceof Element ? editable : null;
-      const target_kind = !el
-        ? 'none'
-        : el instanceof HTMLTextAreaElement
-          ? 'textarea'
-          : el instanceof HTMLInputElement
-            ? `input:${el.type || 'text'}`
-            : el instanceof HTMLElement && el.isContentEditable
-              ? 'contenteditable'
-              : el.getAttribute('role') === 'textbox'
-                ? 'role=textbox'
-                : el.tagName.toLowerCase();
-      const actual_text = !el
-        ? ''
-        : el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
-          ? el.value || ''
-          : (el as HTMLElement).innerText || el.textContent || '';
-
-      // Placeholder 是否还可见 — 对 React 受控编辑器（Draft.js / Slate / Lexical /
-      // ProseMirror）来说，placeholder 还在显示 == internal state 仍为空 == 没真正接受输入。
-      // 检查范围：目标 contenteditable 自身及其最近的相对定位容器（通常 placeholder 是
-      // absolute 兄弟节点）。
-      function isPlaceholderVisible(root: Element): boolean {
-        const scope = root.closest('[role="dialog"],form,article,section,div') || root.parentElement || root;
-        const selectors = [
-          '[data-placeholder]',
-          '[aria-placeholder]:not([contenteditable])',
-          '.public-DraftEditorPlaceholder-root',
-          '.public-DraftEditorPlaceholder-inner',
-          '[data-slate-placeholder]',
-          '[data-lexical-text-placeholder]',
-          '.ProseMirror-placeholder',
-        ];
-        for (const sel of selectors) {
-          const nodes = scope.querySelectorAll(sel);
-          for (const node of Array.from(nodes)) {
-            const r = (node as HTMLElement).getBoundingClientRect();
-            const style = window.getComputedStyle(node as HTMLElement);
-            if (r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0.05) {
-              return true;
-            }
-          }
-        }
-        return false;
-      }
-
-      function buttonText(button: Element): string {
-        return [
-          button.getAttribute('aria-label'),
-          button.getAttribute('title'),
-          button.textContent,
-        ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      }
-
-      function isVisible(node: Element): boolean {
-        const rect = (node as HTMLElement).getBoundingClientRect();
-        const style = window.getComputedStyle(node as HTMLElement);
-        return rect.width > 0
-          && rect.height > 0
-          && style.visibility !== 'hidden'
-          && style.display !== 'none'
-          && parseFloat(style.opacity || '1') > 0.05;
-      }
-
-      function submitButtonState(root: Element): { label?: string; disabled?: boolean } {
-        const scope = root.closest('[role="dialog"],form,article,section') || root.parentElement || root;
-        const buttons = Array.from(scope.querySelectorAll('button,[role="button"]')).filter(isVisible);
-        const positive = /(发帖|发布|发送|评论|回复|post|tweet|send|comment|reply)/i;
-        const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿)/i;
-        for (const button of buttons) {
-          const label = buttonText(button);
-          if (!label || !positive.test(label) || negative.test(label)) continue;
-          const style = window.getComputedStyle(button as HTMLElement);
-          const disabled = (button instanceof HTMLButtonElement && button.disabled)
-            || button.getAttribute('aria-disabled') === 'true'
-            || button.getAttribute('disabled') != null
-            || style.pointerEvents === 'none';
-          return { label, disabled };
-        }
-        return {};
-      }
-
-      const placeholder_visible = !el
-        ? false
-        : el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
-          ? false
-          : isPlaceholderVisible(el);
-
-      const submit = !el || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
-        ? {}
-        : submitButtonState(el);
-
-      return {
-        target_kind,
-        actual_text,
-        placeholder_visible,
-        submit_button_label: submit.label,
-        submit_button_disabled: submit.disabled,
-      };
-    },
-    [refId ?? null],
-  );
-}
-
 function normalizedEquals(actual: string, expected: string): boolean {
   const a = (actual || '').replace(/\s+/g, ' ').trim();
   const b = (expected || '').replace(/\s+/g, ' ').trim();
@@ -535,30 +217,476 @@ function isRichTextTarget(kind: string): boolean {
   return kind === 'contenteditable' || kind === 'role=textbox';
 }
 
-function submitDisabledError(status: EditableStatus): string | undefined {
-  if (!isRichTextTarget(status.target_kind) || !status.submit_button_label || !status.submit_button_disabled) return undefined;
-  return `输入后“${status.submit_button_label}”按钮仍不可用，页面没有接受这次富文本输入`;
-}
-
-function typedTextError(status: EditableStatus, expected: string): string | undefined {
+function typedTextError(status: Pick<EditableStatus, 'actual_text'>, expected: string): string | undefined {
   if (normalizedEquals(status.actual_text, expected)) return undefined;
   const repeats = repeatedExpectedCount(status.actual_text, expected);
   if (repeats > 1) return `输入内容重复了 ${repeats} 次，已阻止继续提交`;
   return '目标编辑器内容与要输入的文本不一致';
 }
 
-async function clearFocusedEditableWithKeyboard(tabId: number, tried: string[]) {
-  tried.push('cdp_select_all_clear');
-  const modifier = /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? 4 : 2;
-  await cdp.pressKey(tabId, 'a', undefined, modifier);
-  await cdp.pressKey(tabId, 'Backspace');
-  await new Promise((r) => setTimeout(r, 120));
+async function prepareAtomicType(tabId: number, refId: string | undefined, token: string, text: string): Promise<AtomicTypePreparation> {
+  return runInPage<AtomicTypePreparation>(
+    tabId,
+    (targetRef, markerToken, inputText) => {
+      const tried: string[] = ['resolve_editable'];
+      const editableSelector = [
+        'textarea',
+        'input:not([type])',
+        'input[type="text"]',
+        'input[type="search"]',
+        'input[type="email"]',
+        'input[type="url"]',
+        'input[type="tel"]',
+        '[contenteditable="true"]',
+        '[contenteditable="plaintext-only"]',
+        '[role="textbox"]',
+      ].join(',');
+
+      function normalize(value: string | null | undefined): string {
+        return (value || '').replace(/\s+/g, ' ').trim();
+      }
+
+      function isVisible(node: Element): boolean {
+        const rect = (node as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(node as HTMLElement);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0.05;
+      }
+
+      function refElement(): Element | null {
+        if (!targetRef) return document.activeElement instanceof Element ? document.activeElement : null;
+        const ref = window.__hermesElementMap?.[targetRef];
+        const node = ref && ref.deref ? ref.deref() : null;
+        return node instanceof Element ? node : null;
+      }
+
+      function isEditable(el: Element | null): el is HTMLElement | HTMLInputElement | HTMLTextAreaElement {
+        if (!el) return false;
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return true;
+        if (el instanceof HTMLElement && el.isContentEditable) return true;
+        return el.getAttribute('role') === 'textbox';
+      }
+
+      function targetKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el instanceof HTMLTextAreaElement) return 'textarea';
+        if (el instanceof HTMLInputElement) return `input:${el.type || 'text'}`;
+        if (el instanceof HTMLElement && el.isContentEditable) return 'contenteditable';
+        if (el.getAttribute('role') === 'textbox') return 'role=textbox';
+        return el.tagName.toLowerCase();
+      }
+
+      function readText(el: Element | null): string {
+        if (!el) return '';
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value || '';
+        return (el as HTMLElement).innerText || el.textContent || '';
+      }
+
+      function buttonText(button: Element): string {
+        return [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent]
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+
+      function isSubmitButton(button: Element): boolean {
+        const label = buttonText(button);
+        const positive = /(发帖|发布|发送|评论|回复|post|tweet|send|comment|reply)/i;
+        const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next)/i;
+        return Boolean(label && positive.test(label) && !negative.test(label));
+      }
+
+      function scoreCandidate(el: Element, base: Element | null): number {
+        let score = 0;
+        if (el instanceof HTMLTextAreaElement) score += 30;
+        else if (el instanceof HTMLInputElement) score += 25;
+        else if (el instanceof HTMLElement && el.isContentEditable) score += 20;
+        else if (el.getAttribute('role') === 'textbox') score += 18;
+        if (base && el === base) score += 100;
+        if (base && base.contains(el)) score += 50;
+        if (el.closest('[role="dialog"],[aria-modal="true"]')) score += 25;
+        if (document.activeElement === el) score += 10;
+        return score;
+      }
+
+      function resolveEditable(): Element | null {
+        const base = refElement();
+        if (isEditable(base)) return base;
+        const candidates: Element[] = [];
+        if (base) {
+          candidates.push(...Array.from(base.querySelectorAll(editableSelector)));
+          const closest = base.closest(editableSelector);
+          if (closest) candidates.push(closest);
+        }
+        if (document.activeElement instanceof Element) {
+          if (isEditable(document.activeElement)) candidates.push(document.activeElement);
+          candidates.push(...Array.from(document.activeElement.querySelectorAll?.(editableSelector) || []));
+        }
+        candidates.push(...Array.from(document.querySelectorAll(editableSelector)));
+        return candidates
+          .filter((el, index, arr) => arr.indexOf(el) === index)
+          .filter(isVisible)
+          .sort((a, b) => scoreCandidate(b, base) - scoreCandidate(a, base))[0] || null;
+      }
+
+      function resolveScope(target: Element): Element {
+        let node: Element | null = target;
+        while (node && node !== document.body) {
+          if (Array.from(node.querySelectorAll('button,[role="button"]')).some((button) => isVisible(button) && isSubmitButton(button))) {
+            return node;
+          }
+          node = node.parentElement;
+        }
+        return target.closest('[role="dialog"],[aria-modal="true"],form,[role="group"],article,section') || target.parentElement || target;
+      }
+
+      function scopeKind(scope: Element): string {
+        if (scope.getAttribute('role')) return `role=${scope.getAttribute('role')}`;
+        if (scope.tagName) return scope.tagName.toLowerCase();
+        return 'scope';
+      }
+
+      function dispatchInputEvents(el: Element, inputType = 'deleteContentBackward') {
+        try {
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+        } catch {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      function clearTarget(el: Element) {
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) setter.call(el, '');
+          else el.value = '';
+          dispatchInputEvents(el);
+          return;
+        }
+        if (el instanceof HTMLElement) {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          if (!document.execCommand('delete')) el.textContent = '';
+          dispatchInputEvents(el);
+        }
+      }
+
+      document
+        .querySelectorAll('[data-hermes-type-target],[data-hermes-type-scope],[data-hermes-editable-index]')
+        .forEach((node) => {
+          node.removeAttribute('data-hermes-type-target');
+          node.removeAttribute('data-hermes-type-scope');
+          node.removeAttribute('data-hermes-editable-index');
+        });
+
+      if (normalize(inputText)) {
+        for (const editable of Array.from(document.querySelectorAll(editableSelector)).filter(isVisible)) {
+          if (normalize(readText(editable)).includes(normalize(inputText))) {
+            clearTarget(editable);
+            tried.push('clear_existing_residue');
+          }
+        }
+      }
+
+      const target = resolveEditable();
+      if (!target) {
+        return { ok: false, token: markerToken, target_kind: 'none', scope_kind: 'none', actual_text: '', snapshots: [], tried, error: 'No editable target found' };
+      }
+      const scope = resolveScope(target);
+      (target as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'center' });
+      (target as HTMLElement).focus?.();
+      clearTarget(target);
+      tried.push('clear_target');
+
+      const targetText = readText(target);
+      if (targetText.replace(/\s+/g, ' ').trim()) {
+        return {
+          ok: false,
+          token: markerToken,
+          target_kind: targetKind(target),
+          scope_kind: scopeKind(scope),
+          actual_text: targetText,
+          snapshots: [],
+          tried,
+          error: '清空目标编辑器失败，未执行输入',
+        };
+      }
+
+      target.setAttribute('data-hermes-type-target', markerToken);
+      scope.setAttribute('data-hermes-type-scope', markerToken);
+      const editables = Array.from(scope.querySelectorAll(editableSelector)).filter(isVisible);
+      if (!editables.includes(target)) editables.unshift(target);
+      const snapshots = editables
+        .filter((el, index, arr) => arr.indexOf(el) === index)
+        .map((el, index) => {
+          el.setAttribute('data-hermes-editable-index', String(index));
+          return { index, text: readText(el), target: el === target };
+        });
+      const dirty = snapshots.find((item) => !item.target && normalize(item.text));
+      if (dirty) {
+        return {
+          ok: false,
+          token: markerToken,
+          target_kind: targetKind(target),
+          scope_kind: scopeKind(scope),
+          actual_text: targetText,
+          snapshots,
+          tried,
+          error: '输入作用域内存在其他未清空编辑器，未执行输入',
+        };
+      }
+
+      return {
+        ok: true,
+        token: markerToken,
+        target_kind: targetKind(target),
+        scope_kind: scopeKind(scope),
+        actual_text: targetText,
+        snapshots,
+        tried,
+      };
+    },
+    [refId ?? null, token, text],
+  );
+}
+
+async function inspectAtomicType(tabId: number, token: string, expected: string): Promise<EditableStatus> {
+  return runInPage<EditableStatus>(
+    tabId,
+    (markerToken, inputText) => {
+      const tried: string[] = ['inspect_atomic_type'];
+      const editableSelector = 'textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]';
+      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
+      const scope = document.querySelector(`[data-hermes-type-scope="${markerToken}"]`) || target?.parentElement || null;
+
+      function normalize(value: string | null | undefined): string {
+        return (value || '').replace(/\s+/g, ' ').trim();
+      }
+
+      function readText(el: Element | null): string {
+        if (!el) return '';
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value || '';
+        return (el as HTMLElement).innerText || el.textContent || '';
+      }
+
+      function targetKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el instanceof HTMLTextAreaElement) return 'textarea';
+        if (el instanceof HTMLInputElement) return `input:${el.type || 'text'}`;
+        if (el instanceof HTMLElement && el.isContentEditable) return 'contenteditable';
+        if (el.getAttribute('role') === 'textbox') return 'role=textbox';
+        return el.tagName.toLowerCase();
+      }
+
+      function scopeKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el.getAttribute('role')) return `role=${el.getAttribute('role')}`;
+        return el.tagName.toLowerCase();
+      }
+
+      function repeatedCount(actual: string): number {
+        const a = normalize(actual);
+        const b = normalize(inputText);
+        if (!a || !b) return 0;
+        let count = 0;
+        let index = 0;
+        while (true) {
+          const next = a.indexOf(b, index);
+          if (next === -1) return count;
+          count += 1;
+          index = next + b.length;
+        }
+      }
+
+      function isVisible(node: Element): boolean {
+        const rect = (node as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(node as HTMLElement);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0.05;
+      }
+
+      function isPlaceholderVisible(root: Element): boolean {
+        const selectors = [
+          '[data-placeholder]',
+          '[aria-placeholder]:not([contenteditable])',
+          '.public-DraftEditorPlaceholder-root',
+          '.public-DraftEditorPlaceholder-inner',
+          '[data-slate-placeholder]',
+          '[data-lexical-text-placeholder]',
+          '.ProseMirror-placeholder',
+        ];
+        const rootScope = scope || root.parentElement || root;
+        for (const sel of selectors) {
+          for (const node of Array.from(rootScope.querySelectorAll(sel))) {
+            if (isVisible(node)) return true;
+          }
+        }
+        return false;
+      }
+
+      function buttonText(button: Element): string {
+        return [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent]
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+
+      function submitButtonState(root: Element | null): { label?: string; disabled?: boolean } {
+        if (!root) return {};
+        const positive = /(发帖|发布|发送|评论|回复|post|tweet|send|comment|reply)/i;
+        const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next)/i;
+        for (const button of Array.from(root.querySelectorAll('button,[role="button"]')).filter(isVisible)) {
+          const label = buttonText(button);
+          if (!label || !positive.test(label) || negative.test(label)) continue;
+          const style = window.getComputedStyle(button as HTMLElement);
+          return {
+            label,
+            disabled: (button instanceof HTMLButtonElement && button.disabled)
+              || button.getAttribute('aria-disabled') === 'true'
+              || button.getAttribute('disabled') != null
+              || style.pointerEvents === 'none',
+          };
+        }
+        return {};
+      }
+
+      if (!target) {
+        return { ok: false, target_kind: 'none', scope_kind: scopeKind(scope), actual_text: '', residue_preview: '', placeholder_visible: false, error: '目标编辑器标记丢失', tried };
+      }
+
+      const actual = readText(target);
+      const editables = scope ? Array.from(scope.querySelectorAll(editableSelector)).filter(isVisible) : [target];
+      if (!editables.includes(target)) editables.unshift(target);
+      const residues = editables
+        .filter((el) => el !== target && normalize(readText(el)).includes(normalize(inputText)))
+        .map(readText);
+      const targetRepeats = repeatedCount(actual);
+      const submit = submitButtonState(scope);
+      const placeholderVisible = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? false : isPlaceholderVisible(target);
+      let error: string | undefined;
+      if (!normalize(inputText) || normalize(actual) !== normalize(inputText)) {
+        error = targetRepeats > 1 ? `输入内容重复了 ${targetRepeats} 次，已阻止继续提交` : '目标编辑器内容与要输入的文本不一致';
+      } else if (residues.length > 0) {
+        error = '目标文本出现在同一输入作用域的其他编辑器中';
+      } else if (placeholderVisible) {
+        error = '编辑器 placeholder 仍可见，页面没有接受这次富文本输入';
+      } else if (submit.disabled) {
+        error = `输入后“${submit.label}”按钮仍不可用，页面没有接受这次富文本输入`;
+      }
+
+      const residuePreview = residues.concat(targetRepeats > 1 ? [actual] : []).join(' | ').slice(0, 180);
+      return {
+        ok: !error,
+        target_kind: targetKind(target),
+        scope_kind: scopeKind(scope),
+        actual_text: actual,
+        residue_preview: residuePreview,
+        placeholder_visible: placeholderVisible,
+        submit_button_label: submit.label,
+        submit_button_disabled: submit.disabled,
+        error,
+        tried,
+      };
+    },
+    [token, expected],
+  );
+}
+
+async function rollbackAtomicType(tabId: number, token: string, expected: string, snapshots: EditableSnapshot[]): Promise<EditableStatus> {
+  return runInPage<EditableStatus>(
+    tabId,
+    (markerToken, inputText, previousSnapshots) => {
+      const tried: string[] = ['rollback_atomic_type'];
+      const editableSelector = 'textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]';
+      const scope = document.querySelector(`[data-hermes-type-scope="${markerToken}"]`);
+      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
+
+      function normalize(value: string | null | undefined): string {
+        return (value || '').replace(/\s+/g, ' ').trim();
+      }
+
+      function readText(el: Element | null): string {
+        if (!el) return '';
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value || '';
+        return (el as HTMLElement).innerText || el.textContent || '';
+      }
+
+      function targetKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el instanceof HTMLTextAreaElement) return 'textarea';
+        if (el instanceof HTMLInputElement) return `input:${el.type || 'text'}`;
+        if (el instanceof HTMLElement && el.isContentEditable) return 'contenteditable';
+        if (el.getAttribute('role') === 'textbox') return 'role=textbox';
+        return el.tagName.toLowerCase();
+      }
+
+      function scopeKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el.getAttribute('role')) return `role=${el.getAttribute('role')}`;
+        return el.tagName.toLowerCase();
+      }
+
+      function dispatchInputEvents(el: Element) {
+        try {
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+        } catch {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      function restoreText(el: Element, value: string) {
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) setter.call(el, value);
+          else el.value = value;
+        } else {
+          el.textContent = value;
+        }
+        dispatchInputEvents(el);
+      }
+
+      let rollback = false;
+      const snapshotByIndex = new Map((previousSnapshots as EditableSnapshot[]).map((item) => [String(item.index), item.text]));
+      const editables = scope ? Array.from(scope.querySelectorAll(editableSelector)) : target ? [target] : [];
+      for (const editable of editables) {
+        const current = readText(editable);
+        const index = editable.getAttribute('data-hermes-editable-index');
+        const previous = index != null ? snapshotByIndex.get(index) ?? '' : '';
+        if (normalize(current).includes(normalize(inputText)) || normalize(current) !== normalize(previous)) {
+          restoreText(editable, previous);
+          rollback = true;
+        }
+      }
+
+      const actual = readText(target);
+      const residue = editables.map(readText).filter((text) => normalize(text).includes(normalize(inputText))).join(' | ').slice(0, 180);
+      return {
+        ok: false,
+        target_kind: targetKind(target),
+        scope_kind: scopeKind(scope),
+        actual_text: actual,
+        residue_preview: residue,
+        placeholder_visible: false,
+        error: '输入验证失败，已回滚本次输入残留',
+        rollback,
+        tried,
+      };
+    },
+    [token, expected, snapshots],
+  );
 }
 
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
   const tabId = await getCurrentTab(sessionId);
   const tried: string[] = [];
-  let result: PageTypeAttempt | null = null;
+  let lastStatus: EditableStatus | null = null;
+  let lastPreparation: AtomicTypePreparation | null = null;
 
   if (args.ref_id) {
     const { x, y } = await refIdToCoords(tabId, args.ref_id);
@@ -567,94 +695,73 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     await cdp.mouseClick(tabId, x, y);
   }
 
-  result = await pageTypeAttempt(tabId, args.ref_id, args.text);
-  tried.push(...result.tried);
+  const strategies: Array<{ name: string; run: () => Promise<void> }> = [
+    { name: 'cdp_insertText', run: () => cdp.insertText(tabId, args.text) },
+    { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text) },
+  ];
 
-  if (!result.ok) {
-    if (isRichTextTarget(result.target_kind)) {
-      await clearFocusedEditableWithKeyboard(tabId, tried);
+  for (const strategy of strategies) {
+    const token = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const preparation = await prepareAtomicType(tabId, args.ref_id, token, args.text);
+    lastPreparation = preparation;
+    tried.push(...preparation.tried, strategy.name);
+    if (!preparation.ok) {
+      lastStatus = {
+        ok: false,
+        target_kind: preparation.target_kind,
+        scope_kind: preparation.scope_kind,
+        actual_text: preparation.actual_text,
+        residue_preview: '',
+        placeholder_visible: false,
+        error: preparation.error,
+        tried,
+      };
+      break;
     }
-    tried.push('cdp_insertText');
-    await cdp.insertText(tabId, args.text);
-    await new Promise((r) => setTimeout(r, 150));
-    const actual = await readEditableText(tabId, args.ref_id);
-    const typedError = typedTextError(actual, args.text);
-    result = {
-      ok: !typedError && !actual.placeholder_visible && !submitDisabledError(actual),
-      strategy: 'cdp_insertText',
-      target_kind: actual.target_kind,
-      actual_text: actual.actual_text,
+
+    await strategy.run();
+    await new Promise((r) => setTimeout(r, 180));
+    let status = await inspectAtomicType(tabId, token, args.text);
+    status.tried = [...tried, ...status.tried];
+
+    if (status.ok && isRichTextTarget(status.target_kind) && status.submit_button_disabled) {
+      tried.push('activation_nudge');
+      await cdp.typeTextByKeyEvents(tabId, ' ');
+      await cdp.pressKey(tabId, 'Backspace');
+      await new Promise((r) => setTimeout(r, 180));
+      status = await inspectAtomicType(tabId, token, args.text);
+      status.tried = [...tried, ...status.tried];
+    }
+
+    if (status.ok) {
+      if (args.submit) await cdp.pressKey(tabId, 'Enter');
+      return {
+        typed_chars: args.text.length,
+        submitted: !!args.submit,
+        verified: true,
+        strategy: strategy.name,
+        target_kind: status.target_kind,
+        scope_kind: status.scope_kind,
+        submit_button_disabled: false,
+        actual_text_preview: (status.actual_text || '').slice(0, 160),
+      } satisfies TypeResult;
+    }
+
+    const rollback = await rollbackAtomicType(tabId, token, args.text, preparation.snapshots);
+    lastStatus = {
+      ...status,
+      rollback: rollback.rollback,
+      residue_preview: rollback.residue_preview || status.residue_preview,
       tried,
-      error: submitDisabledError(actual) || typedError || result.error,
     };
   }
 
-  // Trusted-event 二级验证：即使 actual_text 包含期望文字，如果 placeholder 还在显示，
-  // 说明 React 受控编辑器的 internal state 没真正接受输入（DOM 有字但状态层为空），
-  // 提交按钮会保持 disabled。这里逐字 dispatchKeyEvent 重试，每个按键都是 trusted。
-  if (result.ok) {
-    const verify = await readEditableText(tabId, args.ref_id);
-    if (verify.placeholder_visible) {
-      tried.push('placeholder_still_visible_after_' + result.strategy);
-      // 用 CDP 键盘逐字输入，给编辑器真实的键盘事件。
-      tried.push('cdp_key_events_per_char');
-      await clearFocusedEditableWithKeyboard(tabId, tried);
-      await cdp.typeTextByKeyEvents(tabId, args.text);
-      await new Promise((r) => setTimeout(r, 200));
-      const after = await readEditableText(tabId, args.ref_id);
-      const typedError = typedTextError(after, args.text);
-      result = {
-        ok: !typedError && !after.placeholder_visible && !submitDisabledError(after),
-        strategy: 'cdp_key_events_per_char',
-        target_kind: after.target_kind,
-        actual_text: after.actual_text,
-        tried,
-        error: submitDisabledError(after) || typedError || (after.placeholder_visible
-          ? '编辑器 placeholder 仍可见，internal state 未接受输入（React 受控编辑器拒绝了所有策略）'
-          : undefined),
-      };
-    }
-  }
-
-  if (result.ok) {
-    const status = await readEditableText(tabId, args.ref_id);
-    const blocked = submitDisabledError(status);
-    if (blocked) {
-      tried.push('submit_button_disabled_after_' + result.strategy);
-      // 某些富文本编辑器需要一次真实键盘编辑才会重新计算提交状态。
-      await cdp.typeTextByKeyEvents(tabId, ' ');
-      await cdp.pressKey(tabId, 'Backspace');
-      await new Promise((r) => setTimeout(r, 200));
-      const after = await readEditableText(tabId, args.ref_id);
-      const typedError = typedTextError(after, args.text);
-      result = {
-        ok: !typedError && !after.placeholder_visible && !submitDisabledError(after),
-        strategy: result.strategy + '+activation_nudge',
-        target_kind: after.target_kind,
-        actual_text: after.actual_text,
-        tried,
-        error: submitDisabledError(after) || typedError || blocked,
-      };
-    }
-  }
-
-  if (!result.ok) {
-    const preview = (result.actual_text || '').slice(0, 160);
-    throw new Error(
-      `输入失败：${result.error || '目标编辑器没有包含要输入的文本'}。target=${result.target_kind}; tried=${tried.join(', ')}; actual="${preview}"`,
-    );
-  }
-
-  if (args.submit) await cdp.pressKey(tabId, 'Enter');
-
-  return {
-    typed_chars: args.text.length,
-    submitted: !!args.submit,
-    verified: true,
-    strategy: result.strategy,
-    target_kind: result.target_kind,
-    actual_text_preview: (result.actual_text || '').slice(0, 160),
-  } satisfies TypeResult;
+  const status = lastStatus;
+  const preview = (status?.actual_text || lastPreparation?.actual_text || '').slice(0, 160);
+  const residue = (status?.residue_preview || '').slice(0, 160);
+  throw new Error(
+    `输入失败：${status?.error || typedTextError({ actual_text: preview }, args.text) || '目标编辑器没有包含要输入的文本'}。target=${status?.target_kind || lastPreparation?.target_kind || 'none'}; scope=${status?.scope_kind || lastPreparation?.scope_kind || 'none'}; rollback=${status?.rollback ?? false}; residue="${residue}"; tried=${tried.join(', ')}; actual="${preview}"`,
+  );
 }
 
 async function scroll(sessionId: string, args: { direction: 'up' | 'down' | 'top' | 'bottom'; amount?: number }) {
