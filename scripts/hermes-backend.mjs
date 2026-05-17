@@ -90,7 +90,7 @@ function resolveGatewayCommand() {
   if (fileExists(venvPython)) {
     return {
       command: venvPython,
-      args: ['-m', 'hermes_cli.main', 'gateway', 'run', '--host', host, '--port', String(port)],
+      args: ['-m', 'hermes_cli.main', 'gateway', 'run'],
       cwd: agentDir,
       label: `${venvPython} -m hermes_cli.main gateway run`,
     };
@@ -100,7 +100,7 @@ function resolveGatewayCommand() {
   if (hermes) {
     return {
       command: hermes,
-      args: ['gateway', 'run', '--host', host, '--port', String(port)],
+      args: ['gateway', 'run'],
       cwd: repoRoot,
       label: `${hermes} gateway run`,
     };
