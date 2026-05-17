@@ -56,6 +56,46 @@ npm run dev
 
 如果只是普通使用，推荐走 `npm run build` + 加载 `dist/`；`npm run dev` 更适合开发调试。
 
+## 后端自动检测和启动
+
+Hermes in Chrome 需要本地 Hermes gateway，默认连接：
+
+```text
+ws://127.0.0.1:8642/api/ws/extension
+```
+
+检查后端是否已启动：
+
+```bash
+npm run backend:status
+```
+
+如果没有启动，自动在后台启动：
+
+```bash
+npm run backend:ensure
+```
+
+这个脚本会：
+
+1. 检测 `127.0.0.1:8642` 是否可连接
+2. 如果已启动，直接退出
+3. 如果未启动，优先使用 `~/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main gateway run`
+4. 找不到本地 venv 时，回退到 PATH 里的 `hermes gateway run`
+5. 日志写到 `~/.hermes/logs/hermes-in-chrome-gateway.log`
+
+如果你的 Hermes Agent 不在默认位置，可以指定路径：
+
+```bash
+HERMES_AGENT_DIR=/path/to/hermes-agent npm run backend:ensure
+```
+
+如果你的 gateway 不使用默认端口：
+
+```bash
+HERMES_GATEWAY_PORT=8642 npm run backend:ensure
+```
+
 ## 主题
 
 侧边栏自带两套主题，header 第一个按钮切换：
@@ -121,6 +161,7 @@ MINIMAX_API_KEY=...
 
 - **后端**：Hermes Agent（第三方项目，独立维护），监听 `127.0.0.1:8642`，提供 `/api/ws/extension` WebSocket endpoint
 - 后端的 5 个 provider handler（`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`）以及浏览器工具桥需要在 Hermes Agent 里注册
+- 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动
 
 ### WebSocket 协议契约
 
