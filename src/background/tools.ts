@@ -11,6 +11,22 @@ interface SessionToolState {
 const sessionStates = new Map<string, SessionToolState>();
 type A11yTree = { pageContent: string; viewport?: { width: number; height: number }; error?: string };
 type BatchAction = { tool?: ToolName; name?: ToolName; args?: Record<string, unknown>; input?: Record<string, unknown> };
+type TypeResult = {
+  typed_chars: number;
+  submitted: boolean;
+  verified: true;
+  strategy: string;
+  target_kind: string;
+  actual_text_preview: string;
+};
+type PageTypeAttempt = {
+  ok: boolean;
+  strategy: string;
+  target_kind: string;
+  actual_text: string;
+  error?: string;
+  tried: string[];
+};
 
 /** 把 session 绑定到一个 tab（首次发消息时调用） */
 export function bindSessionToTab(sessionId: string, tabId: number): void {
@@ -159,36 +175,291 @@ async function clickRef(sessionId: string, args: { ref_id: string }) {
   return { clicked: args.ref_id, x, y };
 }
 
+async function pageTypeAttempt(tabId: number, refId: string | undefined, text: string): Promise<PageTypeAttempt> {
+  return runInPage<PageTypeAttempt>(
+    tabId,
+    (targetRef, inputText) => {
+      const tried: string[] = [];
+      const editableSelector = [
+        'textarea',
+        'input:not([type])',
+        'input[type="text"]',
+        'input[type="search"]',
+        'input[type="email"]',
+        'input[type="url"]',
+        'input[type="tel"]',
+        '[contenteditable="true"]',
+        '[contenteditable="plaintext-only"]',
+        '[role="textbox"]',
+      ].join(',');
+
+      function normalize(value: string | null | undefined): string {
+        return (value || '').replace(/\s+/g, ' ').trim();
+      }
+
+      function containsExpected(actual: string): boolean {
+        const a = normalize(actual);
+        const b = normalize(inputText);
+        return b.length === 0 || a.includes(b);
+      }
+
+      function refElement(): Element | null {
+        if (!targetRef) {
+          return document.activeElement instanceof Element ? document.activeElement : null;
+        }
+        const ref = window.__hermesElementMap?.[targetRef];
+        const node = ref && ref.deref ? ref.deref() : null;
+        return node instanceof Element ? node : null;
+      }
+
+      function isEditable(el: Element | null): el is HTMLElement | HTMLInputElement | HTMLTextAreaElement {
+        if (!el) return false;
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return true;
+        if (el instanceof HTMLElement && el.isContentEditable) return true;
+        return el.getAttribute('role') === 'textbox';
+      }
+
+      function scoreCandidate(el: Element): number {
+        if (el instanceof HTMLTextAreaElement) return 10;
+        if (el instanceof HTMLInputElement) return 9;
+        if (el instanceof HTMLElement && el.isContentEditable) return 8;
+        if (el.getAttribute('role') === 'textbox') return 7;
+        return 0;
+      }
+
+      function resolveEditable(): Element | null {
+        const base = refElement();
+        if (isEditable(base)) return base;
+        const candidates: Element[] = [];
+        if (base) {
+          candidates.push(...Array.from(base.querySelectorAll(editableSelector)));
+          const closest = base.closest(editableSelector);
+          if (closest) candidates.push(closest);
+        }
+        if (document.activeElement instanceof Element) {
+          if (isEditable(document.activeElement)) candidates.push(document.activeElement);
+          candidates.push(...Array.from(document.activeElement.querySelectorAll?.(editableSelector) || []));
+        }
+        candidates.push(...Array.from(document.querySelectorAll(editableSelector)));
+        const visible = candidates
+          .filter((el, index, arr) => arr.indexOf(el) === index)
+          .filter((el) => {
+            const r = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          })
+          .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+        return visible[0] || null;
+      }
+
+      function targetKind(el: Element | null): string {
+        if (!el) return 'none';
+        if (el instanceof HTMLTextAreaElement) return 'textarea';
+        if (el instanceof HTMLInputElement) return `input:${el.type || 'text'}`;
+        if (el instanceof HTMLElement && el.isContentEditable) return 'contenteditable';
+        if (el.getAttribute('role') === 'textbox') return 'role=textbox';
+        return el.tagName.toLowerCase();
+      }
+
+      function readText(el: Element | null): string {
+        if (!el) return '';
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value || '';
+        const aria = el.getAttribute('aria-label') || '';
+        const text = (el as HTMLElement).innerText || el.textContent || '';
+        return text || aria;
+      }
+
+      function dispatchInputEvents(el: Element, inputType = 'insertText') {
+        try {
+          el.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            inputType,
+            data: inputText,
+          }));
+        } catch {}
+        try {
+          el.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType,
+            data: inputText,
+          }));
+        } catch {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      function focusTarget(el: Element) {
+        (el as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'center' });
+        (el as HTMLElement).focus?.();
+      }
+
+      function clearTarget(el: Element) {
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) setter.call(el, '');
+          else el.value = '';
+          dispatchInputEvents(el, 'deleteContentBackward');
+          return;
+        }
+        if (el instanceof HTMLElement) {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          if (!document.execCommand('delete')) {
+            el.textContent = '';
+          }
+          dispatchInputEvents(el, 'deleteContentBackward');
+        }
+      }
+
+      const target = resolveEditable();
+      if (!target) {
+        return { ok: false, strategy: 'none', target_kind: 'none', actual_text: '', error: 'No editable target found', tried };
+      }
+
+      focusTarget(target);
+      clearTarget(target);
+
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        tried.push('native_value_setter');
+        const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(target, inputText);
+        else target.value = inputText;
+        dispatchInputEvents(target);
+        const actual = readText(target);
+        if (containsExpected(actual)) {
+          return { ok: true, strategy: 'native_value_setter', target_kind: targetKind(target), actual_text: actual, tried };
+        }
+      }
+
+      tried.push('execCommand_insertText');
+      focusTarget(target);
+      try {
+        document.execCommand('selectAll', false);
+        document.execCommand('insertText', false, inputText);
+      } catch {}
+      let actual = readText(target);
+      if (containsExpected(actual)) {
+        return { ok: true, strategy: 'execCommand_insertText', target_kind: targetKind(target), actual_text: actual, tried };
+      }
+
+      tried.push('paste_event');
+      try {
+        const data = new DataTransfer();
+        data.setData('text/plain', inputText);
+        target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+      } catch {}
+      actual = readText(target);
+      if (containsExpected(actual)) {
+        return { ok: true, strategy: 'paste_event', target_kind: targetKind(target), actual_text: actual, tried };
+      }
+
+      return {
+        ok: false,
+        strategy: 'dom_attempts_failed',
+        target_kind: targetKind(target),
+        actual_text: actual,
+        error: 'DOM input strategies did not update the target',
+        tried,
+      };
+    },
+    [refId ?? null, text],
+  );
+}
+
+async function readEditableText(tabId: number, refId?: string): Promise<{ target_kind: string; actual_text: string }> {
+  return runInPage(
+    tabId,
+    (targetRef) => {
+      const ref = targetRef ? window.__hermesElementMap?.[targetRef] : null;
+      const base = ref && ref.deref ? ref.deref() : document.activeElement;
+      const editable = base instanceof Element
+        ? (base.matches('textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]')
+            ? base
+            : base.querySelector('textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]') || document.activeElement)
+        : document.activeElement;
+      const el = editable instanceof Element ? editable : null;
+      const target_kind = !el
+        ? 'none'
+        : el instanceof HTMLTextAreaElement
+          ? 'textarea'
+          : el instanceof HTMLInputElement
+            ? `input:${el.type || 'text'}`
+            : el instanceof HTMLElement && el.isContentEditable
+              ? 'contenteditable'
+              : el.getAttribute('role') === 'textbox'
+                ? 'role=textbox'
+                : el.tagName.toLowerCase();
+      const actual_text = !el
+        ? ''
+        : el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+          ? el.value || ''
+          : (el as HTMLElement).innerText || el.textContent || '';
+      return { target_kind, actual_text };
+    },
+    [refId ?? null],
+  );
+}
+
+function normalizedIncludes(actual: string, expected: string): boolean {
+  const a = (actual || '').replace(/\s+/g, ' ').trim();
+  const b = (expected || '').replace(/\s+/g, ' ').trim();
+  return b.length === 0 || a.includes(b);
+}
+
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
   const tabId = await getCurrentTab(sessionId);
+  const tried: string[] = [];
+  let result: PageTypeAttempt | null = null;
+
   if (args.ref_id) {
     const { x, y } = await refIdToCoords(tabId, args.ref_id);
     await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_PHANTOM_CURSOR', x, y }).catch(() => {});
     await new Promise((r) => setTimeout(r, 220));
     await cdp.mouseClick(tabId, x, y);
-    await runInPage(tabId, (targetRef) => {
-      try {
-        const ref = window.__hermesElementMap[targetRef];
-        const n = ref && ref.deref ? ref.deref() : null;
-        if (!n) return;
-        if (n instanceof HTMLInputElement || n instanceof HTMLTextAreaElement) {
-          n.focus();
-          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value') ||
-            Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-          if (setter && setter.set) setter.set.call(n, '');
-          else n.value = '';
-          n.dispatchEvent(new Event('input', { bubbles: true }));
-        } else if (n instanceof HTMLElement && n.isContentEditable) {
-          n.focus();
-          n.textContent = '';
-          n.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      } catch(e) {}
-    }, [args.ref_id]);
   }
-  await cdp.insertText(tabId, args.text);
+
+  result = await pageTypeAttempt(tabId, args.ref_id, args.text);
+  tried.push(...result.tried);
+
+  if (!result.ok) {
+    tried.push('cdp_insertText');
+    await cdp.insertText(tabId, args.text);
+    await new Promise((r) => setTimeout(r, 150));
+    const actual = await readEditableText(tabId, args.ref_id);
+    result = {
+      ok: normalizedIncludes(actual.actual_text, args.text),
+      strategy: 'cdp_insertText',
+      target_kind: actual.target_kind,
+      actual_text: actual.actual_text,
+      tried,
+      error: normalizedIncludes(actual.actual_text, args.text) ? undefined : result.error,
+    };
+  }
+
+  if (!result.ok) {
+    const preview = (result.actual_text || '').slice(0, 160);
+    throw new Error(
+      `输入失败：目标编辑器没有包含要输入的文本。target=${result.target_kind}; tried=${tried.join(', ')}; actual="${preview}"`,
+    );
+  }
+
   if (args.submit) await cdp.pressKey(tabId, 'Enter');
-  return { typed_chars: args.text.length, submitted: !!args.submit };
+
+  return {
+    typed_chars: args.text.length,
+    submitted: !!args.submit,
+    verified: true,
+    strategy: result.strategy,
+    target_kind: result.target_kind,
+    actual_text_preview: (result.actual_text || '').slice(0, 160),
+  } satisfies TypeResult;
 }
 
 async function scroll(sessionId: string, args: { direction: 'up' | 'down' | 'top' | 'bottom'; amount?: number }) {
