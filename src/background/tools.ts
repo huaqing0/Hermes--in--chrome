@@ -792,15 +792,18 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     await cdp.mouseClick(tabId, x, y);
   }
 
-  const strategies: Array<{ name: string; run: () => Promise<void> }> = [
+  const plainTextStrategies: Array<{ name: string; run: () => Promise<void> }> = [
     { name: 'cdp_insertText', run: () => cdp.insertText(tabId, args.text) },
     { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text) },
   ];
+  const richTextStrategy = { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text) };
 
-  for (const strategy of strategies) {
+  for (let attempt = 0; attempt < plainTextStrategies.length; attempt += 1) {
     const token = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const preparation = await prepareAtomicType(tabId, args.ref_id, token, args.text);
     lastPreparation = preparation;
+    const richTextTarget = isRichTextTarget(preparation.target_kind);
+    const strategy = richTextTarget ? richTextStrategy : plainTextStrategies[attempt];
     tried.push(...preparation.tried, strategy.name);
     if (!preparation.ok) {
       lastStatus = {
@@ -816,7 +819,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       break;
     }
 
-    if (isRichTextTarget(preparation.target_kind)) {
+    if (richTextTarget) {
       await clearFocusedEditableWithTrustedKeys(tabId, tried);
       const emptyStatus = await inspectAtomicDraft(tabId, token);
       tried.push(...emptyStatus.tried);
@@ -841,7 +844,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     let status = await inspectAtomicType(tabId, token, args.text);
     status.tried = [...tried, ...status.tried];
 
-    if (status.ok && isRichTextTarget(status.target_kind) && status.submit_button_disabled) {
+    if (status.ok && richTextTarget && status.submit_button_disabled) {
       tried.push('activation_nudge');
       await cdp.typeTextByKeyEvents(tabId, ' ');
       await cdp.pressKey(tabId, 'Backspace');
@@ -867,7 +870,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     const rollback = await rollbackAtomicType(tabId, token, args.text, preparation.snapshots);
     let rollbackResidue = rollback.residue_preview || status.residue_preview;
     let rollbackOk = !!rollback.rollback;
-    if (isRichTextTarget(status.target_kind)) {
+    if (richTextTarget) {
       await clearFocusedEditableWithTrustedKeys(tabId, tried);
       const afterClear = await inspectAtomicDraft(tabId, token);
       tried.push(...afterClear.tried);
@@ -880,7 +883,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       residue_preview: rollbackResidue,
       tried,
     };
-    if (!rollbackOk) break;
+    if (richTextTarget || !rollbackOk) break;
   }
 
   const status = lastStatus;
