@@ -23,6 +23,8 @@
     "manifest-v3"
   ],
   "scripts": {
+    "setup": "npm install && npm run backend:ensure && npm run build",
+    "start": "npm run backend:ensure && npm run dev",
     "backend:status": "node scripts/hermes-backend.mjs status",
     "backend:start": "node scripts/hermes-backend.mjs start",
     "backend:ensure": "node scripts/hermes-backend.mjs ensure",

@@ -31,12 +31,23 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 
 ## 从 GitHub 下载和安装
 
-当前版本需要本地构建后，以“加载已解压的扩展程序”的方式安装：
+当前版本需要本地构建后，以“加载已解压的扩展程序”的方式安装。
+
+推荐一键安装：
 
 ```bash
 git clone https://github.com/huaqing0/hermes-in-chrome.git
 cd hermes-in-chrome
+npm run setup
+```
+
+`npm run setup` 会安装依赖、检测/启动 Hermes gateway，并构建扩展。
+
+如果你想手动分步执行：
+
+```bash
 npm install
+npm run backend:ensure
 npm run build
 ```
 
@@ -51,10 +62,10 @@ npm run build
 开发模式（热重载）：
 
 ```bash
-npm run dev
+npm start
 ```
 
-如果只是普通使用，推荐走 `npm run build` + 加载 `dist/`；`npm run dev` 更适合开发调试。
+如果只是普通使用，推荐走 `npm run setup` + 加载 `dist/`；`npm start` 更适合开发调试。
 
 ## 后端自动检测和启动
 

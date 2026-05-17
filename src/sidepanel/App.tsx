@@ -484,8 +484,10 @@ export default function App() {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [oauthSession, setOauthSession] = useState<{ provider: string; loginUrl?: string; userCode?: string; sessionId?: string; pollInterval?: number } | null>(null);
   const [providerBusy, setProviderBusy] = useState(false);
+  const [startupChecking, setStartupChecking] = useState(false);
   const [providerBanner, setProviderBanner] = useState<string | null>(null);
   const oauthPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startupCheckKeyRef = useRef('');
   const [credentials, setCredentials] = useState<ProviderCredentialStore>({});
   const credentialsRef = useRef<ProviderCredentialStore>({});
   const [credentialDraft, setCredentialDraft] = useState<ProviderCredential>({});
@@ -620,8 +622,9 @@ export default function App() {
     };
   }
 
-  async function refreshProviderStatus() {
-    setProviderBusy(true);
+  async function refreshProviderStatus(options: { silent?: boolean } = {}) {
+    if (options.silent) setStartupChecking(true);
+    else setProviderBusy(true);
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'SP_PROVIDER_STATUS',
@@ -635,7 +638,8 @@ export default function App() {
         message: `状态查询失败: ${e instanceof Error ? e.message : String(e)}`,
       });
     } finally {
-      setProviderBusy(false);
+      if (options.silent) setStartupChecking(false);
+      else setProviderBusy(false);
     }
   }
 
@@ -753,6 +757,20 @@ export default function App() {
     return () => stopOauthPoll();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen, settings.provider]);
+
+  useEffect(() => {
+    if (!connected) {
+      startupCheckKeyRef.current = '';
+      return;
+    }
+    const provider = settings.provider || 'auto';
+    const credential = credentials[provider];
+    const key = `${provider}:${settings.model || ''}:${credential?.apiKey ? 'key' : ''}:${credential?.baseUrl || ''}`;
+    if (startupCheckKeyRef.current === key) return;
+    startupCheckKeyRef.current = key;
+    refreshProviderStatus({ silent: true }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, settings.provider, settings.model, credentials]);
 
   function approveCall(id: string, approved: boolean, session_id: string) {
     chrome.runtime.sendMessage({ type: 'SP_TOOL_APPROVAL', id, approved, session_id } satisfies SidepanelMessage).catch(() => {});
@@ -1039,6 +1057,29 @@ export default function App() {
     ? (settings.model || '')
     : '__custom__';
   const providerHasCredential = !!credentials[currentProvider.value]?.apiKey || !!credentials[currentProvider.value]?.baseUrl;
+  const statusForCurrentProvider = providerStatus?.provider === currentProvider.value ? providerStatus : null;
+  const setupNotice = !connected
+    ? {
+        level: 'error' as const,
+        title: 'Hermes 后端未连接',
+        body: '在项目目录运行 npm run backend:ensure，脚本会检测并启动本地 Hermes gateway。',
+        command: 'npm run backend:ensure',
+      }
+    : startupChecking
+      ? {
+          level: 'checking' as const,
+          title: '正在检测模型配置',
+          body: `正在检查 ${currentProvider.label} 是否可用。`,
+          command: '',
+        }
+      : statusForCurrentProvider && !statusForCurrentProvider.ok
+        ? {
+            level: 'warn' as const,
+            title: `${currentProvider.label} 未就绪`,
+            body: statusForCurrentProvider.message || statusForCurrentProvider.hint || currentProvider.setupHint,
+            command: currentProvider.value === 'auto' ? 'npm run backend:ensure' : '',
+          }
+        : null;
 
   const toolCount = entries.filter((e) => e.kind === 'tool').length;
 
@@ -1171,7 +1212,7 @@ export default function App() {
                   <span className="provider-status-msg">
                     {providerBusy ? '查询中…' : (providerStatus?.message || '未查询，点测试连接或登录。')}
                   </span>
-                  <button onClick={refreshProviderStatus} disabled={providerBusy}>刷新</button>
+                  <button onClick={() => refreshProviderStatus()} disabled={providerBusy}>刷新</button>
                 </div>
                 <div className="provider-actions">
                   {currentProvider.authType === 'api_key' && (
@@ -1215,6 +1256,26 @@ export default function App() {
         <div className="provider-banner" role="alert">
           <span>{providerBanner}</span>
           <button onClick={() => setProviderBanner(null)} aria-label="dismiss">×</button>
+        </div>
+      )}
+      {setupNotice && (
+        <div className={`setup-notice ${setupNotice.level}`} role={setupNotice.level === 'error' ? 'alert' : 'status'}>
+          <div className="setup-copy">
+            <div className="setup-title">{setupNotice.title}</div>
+            <div className="setup-body">{setupNotice.body}</div>
+            {setupNotice.command && <code>{setupNotice.command}</code>}
+          </div>
+          <div className="setup-actions">
+            {setupNotice.command && (
+              <button onClick={() => navigator.clipboard.writeText(setupNotice.command).catch(() => {})}>复制命令</button>
+            )}
+            <button onClick={() => refreshProviderStatus()} disabled={!connected || providerBusy}>
+              重新检测
+            </button>
+            {connected && setupNotice.level === 'warn' && (
+              <button onClick={() => setSettingsOpen(true)}>打开设置</button>
+            )}
+          </div>
         </div>
       )}
       <div className="feed" ref={feedRef}

@@ -2,6 +2,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,6 +41,26 @@ function isPortOpen() {
     socket.once('timeout', () => done(false));
     socket.once('error', () => done(false));
   });
+}
+
+function isGatewayHealthy() {
+  return new Promise((resolve) => {
+    const req = http.get({ host, port, path: '/health', timeout: 1200 }, (res) => {
+      res.resume();
+      resolve(Boolean(res.statusCode && res.statusCode >= 200 && res.statusCode < 300));
+    });
+    req.once('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.once('error', () => resolve(false));
+  });
+}
+
+async function gatewayState() {
+  if (await isGatewayHealthy()) return 'healthy';
+  if (await isPortOpen()) return 'port-open';
+  return 'offline';
 }
 
 function sleep(ms) {
@@ -100,16 +121,22 @@ Install Hermes Agent first, or run:
 async function waitForGateway() {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await isPortOpen()) return true;
+    if ((await gatewayState()) === 'healthy') return true;
     await sleep(500);
   }
   return false;
 }
 
 async function startGateway() {
-  if (await isPortOpen()) {
-    console.log(`Hermes gateway is already running at ${host}:${port}`);
+  const state = await gatewayState();
+  if (state === 'healthy') {
+    console.log(`Hermes gateway is healthy at http://${host}:${port}/health`);
     return true;
+  }
+  if (state === 'port-open') {
+    console.error(`Port ${host}:${port} is open, but Hermes /health did not respond successfully.`);
+    console.error('Stop the conflicting process or set HERMES_GATEWAY_PORT to another port.');
+    return false;
   }
 
   fs.mkdirSync(logsDir, { recursive: true });
@@ -140,7 +167,7 @@ async function startGateway() {
     return false;
   }
 
-  console.log(`Hermes gateway is reachable at ${host}:${port}`);
+  console.log(`Hermes gateway is healthy at http://${host}:${port}/health`);
   return true;
 }
 
@@ -152,12 +179,16 @@ async function main() {
   }
 
   if (command === 'status') {
-    const ok = await isPortOpen();
-    if (ok) {
-      console.log(`Hermes gateway is running at ${host}:${port}`);
+    const state = await gatewayState();
+    if (state === 'healthy') {
+      console.log(`Hermes gateway is healthy at http://${host}:${port}/health`);
       return;
     }
-    console.error(`Hermes gateway is not reachable at ${host}:${port}`);
+    if (state === 'port-open') {
+      console.error(`Port ${host}:${port} is open, but Hermes /health did not respond successfully.`);
+    } else {
+      console.error(`Hermes gateway is not reachable at ${host}:${port}`);
+    }
     process.exitCode = 1;
     return;
   }
