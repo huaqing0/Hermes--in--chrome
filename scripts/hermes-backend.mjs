@@ -15,6 +15,7 @@ const timeoutMs = Number.parseInt(process.env.HERMES_GATEWAY_TIMEOUT_MS || '1500
 const hermesHome = process.env.HERMES_HOME || path.join(os.homedir(), '.hermes');
 const logsDir = path.join(hermesHome, 'logs');
 const logPath = process.env.HERMES_GATEWAY_LOG || path.join(logsDir, 'hermes-in-chrome-gateway.log');
+const gatewayLockPath = path.join(hermesHome, 'gateway.lock');
 
 function usage() {
   console.log(`Usage: npm run backend:<status|start|ensure>
@@ -73,6 +74,33 @@ function fileExists(file) {
   } catch {
     return false;
   }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error && error.code === 'EPERM';
+  }
+}
+
+function clearStaleGatewayLock() {
+  if (!fileExists(gatewayLockPath)) return;
+  let pid = null;
+  try {
+    const lock = JSON.parse(fs.readFileSync(gatewayLockPath, 'utf8'));
+    pid = Number.isInteger(lock.pid) ? lock.pid : null;
+  } catch {
+    return;
+  }
+  if (pid == null || isProcessAlive(pid)) return;
+
+  const backupPath = `${gatewayLockPath}.stale-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  fs.renameSync(gatewayLockPath, backupPath);
+  console.log(`Removed stale Hermes gateway lock for dead PID ${pid}`);
+  console.log(`Backup: ${backupPath}`);
 }
 
 function commandExists(command) {
@@ -139,6 +167,7 @@ async function startGateway() {
     return false;
   }
 
+  clearStaleGatewayLock();
   fs.mkdirSync(logsDir, { recursive: true });
   const stdout = fs.openSync(logPath, 'a');
   const stderr = fs.openSync(logPath, 'a');
