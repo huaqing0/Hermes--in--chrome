@@ -18,13 +18,15 @@ const logPath = process.env.HERMES_GATEWAY_LOG || path.join(logsDir, 'hermes-in-
 const gatewayLockPath = path.join(hermesHome, 'gateway.lock');
 
 function usage() {
-  console.log(`Usage: npm run backend:<status|start|ensure>
+  console.log(`Usage: npm run backend:<status|start|ensure|watch>
 
 Environment:
   HERMES_AGENT_DIR           Path to hermes-agent checkout (default: ~/.hermes/hermes-agent)
   HERMES_GATEWAY_HOST        Gateway host (default: 127.0.0.1)
   HERMES_GATEWAY_PORT        Gateway port (default: 8642)
   HERMES_GATEWAY_TIMEOUT_MS  Startup wait timeout (default: 15000)
+  HERMES_GATEWAY_WATCH_INTERVAL_MS
+                             Watchdog interval for backend:watch (default: 5000)
   HERMES_GATEWAY_LOG         Log path (default: ~/.hermes/logs/hermes-in-chrome-gateway.log)
 `);
 }
@@ -200,6 +202,32 @@ async function startGateway() {
   return true;
 }
 
+async function watchGateway() {
+  const requestedInterval = Number.parseInt(process.env.HERMES_GATEWAY_WATCH_INTERVAL_MS || '5000', 10);
+  const intervalMs = Number.isFinite(requestedInterval) ? Math.max(1000, requestedInterval) : 5000;
+  console.log(`Watching Hermes gateway at http://${host}:${port}/health every ${intervalMs}ms`);
+  console.log('Press Ctrl+C to stop the watcher. The gateway process itself runs in the background.');
+
+  let lastState = '';
+  while (true) {
+    const state = await gatewayState();
+    if (state !== lastState) {
+      const now = new Date().toISOString();
+      console.log(`[${now}] Hermes gateway state: ${state}`);
+      lastState = state;
+    }
+
+    if (state === 'offline') {
+      const ok = await startGateway();
+      lastState = ok ? 'healthy' : 'offline';
+    } else if (state === 'port-open') {
+      console.error(`Port ${host}:${port} is open, but Hermes /health is not healthy. Waiting before retry.`);
+    }
+
+    await sleep(intervalMs);
+  }
+}
+
 async function main() {
   const command = process.argv[2] || 'ensure';
 
@@ -225,6 +253,11 @@ async function main() {
   if (command === 'start' || command === 'ensure') {
     const ok = await startGateway();
     process.exitCode = ok ? 0 : 1;
+    return;
+  }
+
+  if (command === 'watch') {
+    await watchGateway();
     return;
   }
 

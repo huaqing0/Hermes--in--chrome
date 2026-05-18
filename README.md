@@ -87,6 +87,12 @@ npm run backend:status
 npm run backend:ensure
 ```
 
+如果你希望本地使用时后端被杀掉后自动拉起，开一个终端运行：
+
+```bash
+npm run backend:watch
+```
+
 这个脚本会：
 
 1. 检测 `127.0.0.1:8642` 是否可连接
@@ -94,6 +100,8 @@ npm run backend:ensure
 3. 如果未启动，优先使用 `~/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main gateway run`
 4. 找不到本地 venv 时，回退到 PATH 里的 `hermes gateway run`
 5. 日志写到 `~/.hermes/logs/hermes-in-chrome-gateway.log`
+
+`backend:watch` 会复用同一套检测/启动逻辑，并在前台持续守护；普通一次性启动用 `backend:ensure`。
 
 如果你的 Hermes Agent 不在默认位置，可以指定路径：
 
@@ -172,7 +180,7 @@ MINIMAX_API_KEY=...
 
 - **后端**：Hermes Agent（第三方项目，独立维护），监听 `127.0.0.1:8642`，提供 `/api/ws/extension` WebSocket endpoint
 - 后端的 5 个 provider handler（`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`）以及浏览器工具桥需要在 Hermes Agent 里注册
-- 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动
+- 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动，或用 `npm run backend:watch` 持续守护
 
 ### WebSocket 协议契约
 
