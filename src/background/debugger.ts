@@ -84,7 +84,7 @@ export async function insertText(tabId: number, text: string) {
   await send(tabId, 'Input.insertText', { text });
 }
 
-export async function typeTextByKeyEvents(tabId: number, text: string) {
+export async function typeTextByKeyEvents(tabId: number, text: string, delayMs = 0) {
   for (const ch of Array.from(text)) {
     await send(tabId, 'Input.dispatchKeyEvent', {
       type: 'char',
@@ -92,6 +92,7 @@ export async function typeTextByKeyEvents(tabId: number, text: string) {
       text: ch,
       unmodifiedText: ch,
     });
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 }
 

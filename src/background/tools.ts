@@ -9,6 +9,7 @@ interface SessionToolState {
 }
 
 const sessionStates = new Map<string, SessionToolState>();
+const richTextDirtyTabs = new Map<number, { sessionId: string; url?: string; reason: string; ts: number }>();
 type A11yTree = { pageContent: string; viewport?: { width: number; height: number }; error?: string };
 type BatchAction = { tool?: ToolName; name?: ToolName; args?: Record<string, unknown>; input?: Record<string, unknown> };
 type TypeResult = {
@@ -67,6 +68,31 @@ export function getSessionTab(sessionId: string): number | undefined {
 
 export function clearSession(sessionId: string): void {
   sessionStates.delete(sessionId);
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => richTextDirtyTabs.delete(tabId));
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading' || changeInfo.url) richTextDirtyTabs.delete(tabId);
+});
+
+async function getRichTextDirtyState(tabId: number) {
+  const dirty = richTextDirtyTabs.get(tabId);
+  if (!dirty) return null;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || (dirty.url && tab.url && dirty.url !== tab.url)) {
+    richTextDirtyTabs.delete(tabId);
+    return null;
+  }
+  return dirty;
+}
+
+async function markRichTextDirty(tabId: number, sessionId: string, reason: string): Promise<void> {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  richTextDirtyTabs.set(tabId, { sessionId, url: tab?.url, reason, ts: Date.now() });
+}
+
+function richTextDirtyError(dirty: { reason: string }): string {
+  return `前一次富文本输入失败，页面可能还有 X/YouTube 隐藏草稿残留，已禁止继续输入或提交。请刷新页面或重新打开发布框后再试。原因：${dirty.reason}`;
 }
 
 async function getCurrentTab(sessionId: string): Promise<number> {
@@ -196,11 +222,37 @@ async function refIdToCoords(tabId: number, refId: string): Promise<{ x: number;
 
 async function clickRef(sessionId: string, args: { ref_id: string }) {
   const tabId = await getCurrentTab(sessionId);
+  const dirty = await getRichTextDirtyState(tabId);
+  if (dirty && await refIdLooksLikeSubmitButton(tabId, args.ref_id)) {
+    throw new Error(richTextDirtyError(dirty));
+  }
   const { x, y } = await refIdToCoords(tabId, args.ref_id);
   await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_PHANTOM_CURSOR', x, y }).catch(() => {});
   await new Promise((r) => setTimeout(r, 220));
   await cdp.mouseClick(tabId, x, y);
   return { clicked: args.ref_id, x, y };
+}
+
+async function refIdLooksLikeSubmitButton(tabId: number, refId: string): Promise<boolean> {
+  await ensureA11yInjected(tabId);
+  return runInPage<boolean>(
+    tabId,
+    (targetRef) => {
+      const ref = window.__hermesElementMap?.[targetRef];
+      const node = ref && ref.deref ? ref.deref() : null;
+      if (!(node instanceof Element)) return false;
+      const target = node.closest('button,[role="button"]') || node;
+      const label = [target.getAttribute('aria-label'), target.getAttribute('title'), target.textContent]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const positive = /(发帖|发布|发送|评论|回复|post|tweet|send|comment|reply)/i;
+      const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next)/i;
+      return Boolean(label && positive.test(label) && !negative.test(label));
+    },
+    [refId],
+  ).catch(() => false);
 }
 
 function normalizedEquals(actual: string, expected: string): boolean {
@@ -776,14 +828,33 @@ async function clearFocusedEditableWithTrustedKeys(tabId: number, tried: string[
   await cdp.pressKey(tabId, 'a', 'KeyA', modifier);
   await new Promise((r) => setTimeout(r, 80));
   await cdp.pressKey(tabId, 'Backspace', 'Backspace');
-  await new Promise((r) => setTimeout(r, 180));
+  await new Promise((r) => setTimeout(r, 320));
+}
+
+async function refocusAtomicTarget(tabId: number, token: string, tried: string[]): Promise<void> {
+  tried.push('refocus_atomic_target');
+  await runInPage<void>(
+    tabId,
+    (markerToken) => {
+      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
+      if (target instanceof HTMLElement) {
+        target.scrollIntoView({ block: 'center', inline: 'center' });
+        target.focus();
+      }
+    },
+    [token],
+  ).catch(() => {});
+  await new Promise((r) => setTimeout(r, 160));
 }
 
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
   const tabId = await getCurrentTab(sessionId);
+  const dirty = await getRichTextDirtyState(tabId);
+  if (dirty) throw new Error(richTextDirtyError(dirty));
   const tried: string[] = [];
   let lastStatus: EditableStatus | null = null;
   let lastPreparation: AtomicTypePreparation | null = null;
+  let richTextUnsafeFailure = false;
 
   if (args.ref_id) {
     const { x, y } = await refIdToCoords(tabId, args.ref_id);
@@ -796,7 +867,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     { name: 'cdp_insertText', run: () => cdp.insertText(tabId, args.text) },
     { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text) },
   ];
-  const richTextStrategy = { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text) };
+  const richTextStrategy = { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text, 30) };
 
   for (let attempt = 0; attempt < plainTextStrategies.length; attempt += 1) {
     const token = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -837,6 +908,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
         };
         break;
       }
+      await refocusAtomicTarget(tabId, token, tried);
     }
 
     await strategy.run();
@@ -867,6 +939,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       } satisfies TypeResult;
     }
 
+    if (richTextTarget) richTextUnsafeFailure = true;
     const rollback = await rollbackAtomicType(tabId, token, args.text, preparation.snapshots);
     let rollbackResidue = rollback.residue_preview || status.residue_preview;
     let rollbackOk = !!rollback.rollback;
@@ -889,6 +962,9 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
   const status = lastStatus;
   const preview = (status?.actual_text || lastPreparation?.actual_text || '').slice(0, 160);
   const residue = (status?.residue_preview || '').slice(0, 160);
+  if (richTextUnsafeFailure) {
+    await markRichTextDirty(tabId, sessionId, status?.error || '富文本输入验证失败');
+  }
   throw new Error(
     `输入失败：${status?.error || typedTextError({ actual_text: preview }, args.text) || '目标编辑器没有包含要输入的文本'}。target=${status?.target_kind || lastPreparation?.target_kind || 'none'}; scope=${status?.scope_kind || lastPreparation?.scope_kind || 'none'}; rollback=${status?.rollback ?? false}; residue="${residue}"; tried=${tried.join(', ')}; actual="${preview}"`,
   );
@@ -974,6 +1050,10 @@ async function scrollTo(sessionId: string, args: { ref_id: string }) {
 
 async function pressKey(sessionId: string, args: { key: string }) {
   const tabId = await getCurrentTab(sessionId);
+  const dirty = await getRichTextDirtyState(tabId);
+  if (dirty && /\bEnter\b/i.test(args.key)) {
+    throw new Error(richTextDirtyError(dirty));
+  }
   const parts = args.key.split('+');
   const mainKey = parts[parts.length - 1];
   let modifiers = 0;
