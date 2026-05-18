@@ -918,10 +918,8 @@ async function refocusAtomicTarget(tabId: number, token: string, tried: string[]
 }
 
 async function pasteClipboardIntoFocusedEditable(tabId: number, tried: string[]): Promise<void> {
-  tried.push('clipboard_paste');
-  const platform = await chrome.runtime.getPlatformInfo().catch(() => ({ os: 'mac' as chrome.runtime.PlatformOs }));
-  const modifier = platform.os === 'mac' ? 4 : 2;
-  await cdp.pressKey(tabId, 'v', 'KeyV', modifier);
+  tried.push('cdp_paste_command');
+  await cdp.paste(tabId);
   await sleep(320);
 }
 
@@ -993,7 +991,17 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       try {
         const pasted = await withTemporaryClipboard(args.text, async () => {
           await pasteClipboardIntoFocusedEditable(tabId, tried);
-          return inspectAtomicType(tabId, token, args.text);
+          let inspect = await inspectAtomicType(tabId, token, args.text);
+          // X 的 ProseMirror 处理 paste 是异步的；偶发 320ms 不够。
+          // 一次重试 + 拉长等待，拦掉抖动；第二次仍失败才走真失败回滚。
+          if (!inspect.ok) {
+            tried.push('cdp_paste_command_retry');
+            await refocusAtomicTarget(tabId, token, tried);
+            await cdp.paste(tabId);
+            await sleep(720);
+            inspect = await inspectAtomicType(tabId, token, args.text);
+          }
+          return inspect;
         });
         status = pasted.result;
         clipboardRestored = pasted.clipboardRestored;

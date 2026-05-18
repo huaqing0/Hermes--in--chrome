@@ -123,3 +123,26 @@ export async function evaluate<T = unknown>(tabId: number, expression: string): 
   });
   return r.result.value as T;
 }
+
+// CDP commands:['Paste'] 走 Chromium 编辑器命令路径，等价于真实 Cmd+V，
+// 会触发 paste 事件并把剪贴板内容塞给 focused editable。
+// 单纯 Input.dispatchKeyEvent 模拟 Cmd+V 不会走这条路径（X/ProseMirror 拿不到文本）。
+export async function paste(tabId: number) {
+  await send(tabId, 'Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'v',
+    code: 'KeyV',
+    windowsVirtualKeyCode: 86,
+    nativeVirtualKeyCode: 86,
+    modifiers: 4,
+    commands: ['Paste'],
+  });
+  await send(tabId, 'Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'v',
+    code: 'KeyV',
+    windowsVirtualKeyCode: 86,
+    nativeVirtualKeyCode: 86,
+    modifiers: 4,
+  });
+}
