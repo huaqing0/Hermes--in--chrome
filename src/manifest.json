@@ -33,8 +33,11 @@
     "notifications",
     "webNavigation",
     "offscreen",
+    "clipboardRead",
+    "clipboardWrite",
     "downloads",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "nativeMessaging"
   ],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [

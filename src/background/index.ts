@@ -513,8 +513,8 @@ async function ensureOffscreen() {
   try {
     await chrome.offscreen.createDocument({
       url: 'src/offscreen/offscreen.html',
-      reasons: [chrome.offscreen.Reason.BLOBS],
-      justification: 'Service Worker 心跳保活',
+      reasons: [chrome.offscreen.Reason.BLOBS, chrome.offscreen.Reason.CLIPBOARD],
+      justification: 'Service Worker 心跳保活，并为富文本输入临时写入/恢复剪贴板',
     });
   } catch (e) {
     console.warn('[Hermes SW] offscreen 创建失败', e);

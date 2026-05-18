@@ -15,7 +15,9 @@ export type ToolName =
   | 'screenshot'
   | 'wait'
   | 'browser_batch'
-  | 'get_console_logs';
+  | 'get_console_logs'
+  | 'save_to_local'
+  | 'extract_markdown';
 
 export type ExecMode = 'auto' | 'approval' | 'plan';
 

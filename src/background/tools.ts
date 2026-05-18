@@ -21,6 +21,7 @@ type TypeResult = {
   scope_kind: string;
   submit_button_disabled: false;
   actual_text_preview: string;
+  clipboard_restored?: boolean;
 };
 type EditableStatus = {
   ok: boolean;
@@ -129,6 +130,76 @@ async function runInPage<T>(tabId: number, func: (...args: any[]) => T, args: un
   });
   if (!results.length) throw new Error('页面脚本没有返回结果');
   return results[0].result as T;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureClipboardOffscreen(): Promise<void> {
+  const exists = await chrome.offscreen.hasDocument?.();
+  if (exists) return;
+  try {
+    await chrome.offscreen.createDocument({
+      url: 'src/offscreen/offscreen.html',
+      reasons: [chrome.offscreen.Reason.BLOBS, chrome.offscreen.Reason.CLIPBOARD],
+      justification: '富文本输入需要临时写入并恢复剪贴板',
+    });
+  } catch (e) {
+    if (await chrome.offscreen.hasDocument?.()) return;
+    throw e;
+  }
+}
+
+async function clipboardReadText(): Promise<string> {
+  await ensureClipboardOffscreen();
+  const resp = await chrome.runtime.sendMessage({ type: 'HERMES_CLIPBOARD_READ' }) as { ok?: boolean; value?: string; error?: string };
+  if (!resp?.ok) throw new Error(resp?.error || '无法读取剪贴板');
+  return resp.value ?? '';
+}
+
+async function clipboardWriteText(text: string): Promise<void> {
+  await ensureClipboardOffscreen();
+  const resp = await chrome.runtime.sendMessage({ type: 'HERMES_CLIPBOARD_WRITE', text }) as { ok?: boolean; error?: string };
+  if (!resp?.ok) throw new Error(resp?.error || '无法写入剪贴板');
+}
+
+async function withTemporaryClipboard<T>(text: string, run: () => Promise<T>): Promise<{ result: T; clipboardRestored: boolean }> {
+  let original: string;
+  try {
+    original = await clipboardReadText();
+  } catch (e) {
+    throw new Error(`读取原剪贴板失败，已停止富文本输入以避免覆盖用户剪贴板：${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  await clipboardWriteText(text);
+
+  let result: T | undefined;
+  let caught: unknown;
+  try {
+    result = await run();
+  } catch (e) {
+    caught = e;
+  }
+
+  let clipboardRestored = false;
+  try {
+    await clipboardWriteText(original);
+    clipboardRestored = true;
+  } catch (e) {
+    if (!caught) {
+      throw new Error(`富文本输入完成，但恢复剪贴板失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  if (caught) {
+    if (caught instanceof Error) {
+      (caught as Error & { clipboardRestored?: boolean }).clipboardRestored = clipboardRestored;
+    }
+    throw caught;
+  }
+
+  return { result: result as T, clipboardRestored };
 }
 
 async function waitForTabComplete(tabId: number, timeoutMs = 15000): Promise<boolean> {
@@ -286,10 +357,10 @@ function typedTextError(status: Pick<EditableStatus, 'actual_text'>, expected: s
   return '目标编辑器内容与要输入的文本不一致';
 }
 
-async function prepareAtomicType(tabId: number, refId: string | undefined, token: string, text: string): Promise<AtomicTypePreparation> {
+async function prepareAtomicType(tabId: number, refId: string | undefined, token: string): Promise<AtomicTypePreparation> {
   return runInPage<AtomicTypePreparation>(
     tabId,
-    (targetRef, markerToken, inputText) => {
+    (targetRef, markerToken) => {
       const tried: string[] = ['resolve_editable'];
       const editableSelector = [
         'textarea',
@@ -445,15 +516,6 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
           node.removeAttribute('data-hermes-editable-index');
         });
 
-      if (normalize(inputText)) {
-        for (const editable of Array.from(document.querySelectorAll(editableSelector)).filter(isVisible)) {
-          if (normalize(readText(editable)).includes(normalize(inputText))) {
-            clearTarget(editable);
-            tried.push('clear_existing_residue');
-          }
-        }
-      }
-
       const target = resolveEditable();
       if (!target) {
         return { ok: false, token: markerToken, target_kind: 'none', scope_kind: 'none', actual_text: '', snapshots: [], tried, error: 'No editable target found' };
@@ -461,11 +523,19 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
       const scope = resolveScope(target);
       (target as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'center' });
       (target as HTMLElement).focus?.();
-      clearTarget(target);
-      tried.push('clear_target');
+      const richTextTarget = target instanceof HTMLElement
+        && !(target instanceof HTMLInputElement)
+        && !(target instanceof HTMLTextAreaElement)
+        && (target.isContentEditable || target.getAttribute('role') === 'textbox');
+      if (richTextTarget) {
+        tried.push('defer_rich_text_clear_to_trusted_keys');
+      } else {
+        clearTarget(target);
+        tried.push('clear_target');
+      }
 
       const targetText = readText(target);
-      if (targetText.replace(/\s+/g, ' ').trim()) {
+      if (!richTextTarget && targetText.replace(/\s+/g, ' ').trim()) {
         return {
           ok: false,
           token: markerToken,
@@ -512,7 +582,7 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
         tried,
       };
     },
-    [refId ?? null, token, text],
+    [refId ?? null, token],
   );
 }
 
@@ -847,6 +917,14 @@ async function refocusAtomicTarget(tabId: number, token: string, tried: string[]
   await new Promise((r) => setTimeout(r, 160));
 }
 
+async function pasteClipboardIntoFocusedEditable(tabId: number, tried: string[]): Promise<void> {
+  tried.push('clipboard_paste');
+  const platform = await chrome.runtime.getPlatformInfo().catch(() => ({ os: 'mac' as chrome.runtime.PlatformOs }));
+  const modifier = platform.os === 'mac' ? 4 : 2;
+  await cdp.pressKey(tabId, 'v', 'KeyV', modifier);
+  await sleep(320);
+}
+
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
   const tabId = await getCurrentTab(sessionId);
   const dirty = await getRichTextDirtyState(tabId);
@@ -867,15 +945,14 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
     { name: 'cdp_insertText', run: () => cdp.insertText(tabId, args.text) },
     { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text) },
   ];
-  const richTextStrategy = { name: 'cdp_key_events_per_char', run: () => cdp.typeTextByKeyEvents(tabId, args.text, 30) };
 
   for (let attempt = 0; attempt < plainTextStrategies.length; attempt += 1) {
     const token = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-    const preparation = await prepareAtomicType(tabId, args.ref_id, token, args.text);
+    const preparation = await prepareAtomicType(tabId, args.ref_id, token);
     lastPreparation = preparation;
     const richTextTarget = isRichTextTarget(preparation.target_kind);
-    const strategy = richTextTarget ? richTextStrategy : plainTextStrategies[attempt];
-    tried.push(...preparation.tried, strategy.name);
+    const strategy = plainTextStrategies[attempt];
+    tried.push(...preparation.tried, richTextTarget ? 'rich_text_clipboard_path' : strategy.name);
     if (!preparation.ok) {
       lastStatus = {
         ok: false,
@@ -895,6 +972,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       const emptyStatus = await inspectAtomicDraft(tabId, token);
       tried.push(...emptyStatus.tried);
       if (!emptyStatus.empty) {
+        richTextUnsafeFailure = true;
         lastStatus = {
           ok: false,
           target_kind: emptyStatus.target_kind,
@@ -909,21 +987,68 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
         break;
       }
       await refocusAtomicTarget(tabId, token, tried);
+
+      let status: EditableStatus;
+      let clipboardRestored = false;
+      try {
+        const pasted = await withTemporaryClipboard(args.text, async () => {
+          await pasteClipboardIntoFocusedEditable(tabId, tried);
+          return inspectAtomicType(tabId, token, args.text);
+        });
+        status = pasted.result;
+        clipboardRestored = pasted.clipboardRestored;
+      } catch (e) {
+        richTextUnsafeFailure = true;
+        await clearFocusedEditableWithTrustedKeys(tabId, tried);
+        const afterClear = await inspectAtomicDraft(tabId, token);
+        tried.push(...afterClear.tried);
+        lastStatus = {
+          ok: false,
+          target_kind: afterClear.target_kind,
+          scope_kind: afterClear.scope_kind,
+          actual_text: afterClear.target_text,
+          residue_preview: afterClear.residue_preview,
+          placeholder_visible: false,
+          error: e instanceof Error ? e.message : String(e),
+          rollback: afterClear.empty,
+          tried,
+        };
+        break;
+      }
+
+      status.tried = [...tried, ...status.tried];
+      if (status.ok) {
+        if (args.submit) await cdp.pressKey(tabId, 'Enter');
+        return {
+          typed_chars: args.text.length,
+          submitted: !!args.submit,
+          verified: true,
+          strategy: 'clipboard_paste',
+          target_kind: status.target_kind,
+          scope_kind: status.scope_kind,
+          submit_button_disabled: false,
+          actual_text_preview: (status.actual_text || '').slice(0, 160),
+          clipboard_restored: clipboardRestored,
+        } satisfies TypeResult;
+      }
+
+      richTextUnsafeFailure = true;
+      await clearFocusedEditableWithTrustedKeys(tabId, tried);
+      const afterClear = await inspectAtomicDraft(tabId, token);
+      tried.push(...afterClear.tried);
+      lastStatus = {
+        ...status,
+        rollback: afterClear.empty,
+        residue_preview: afterClear.residue_preview || status.residue_preview,
+        tried,
+      };
+      break;
     }
 
     await strategy.run();
     await new Promise((r) => setTimeout(r, 180));
     let status = await inspectAtomicType(tabId, token, args.text);
     status.tried = [...tried, ...status.tried];
-
-    if (status.ok && richTextTarget && status.submit_button_disabled) {
-      tried.push('activation_nudge');
-      await cdp.typeTextByKeyEvents(tabId, ' ');
-      await cdp.pressKey(tabId, 'Backspace');
-      await new Promise((r) => setTimeout(r, 180));
-      status = await inspectAtomicType(tabId, token, args.text);
-      status.tried = [...tried, ...status.tried];
-    }
 
     if (status.ok) {
       if (args.submit) await cdp.pressKey(tabId, 'Enter');
@@ -939,24 +1064,16 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       } satisfies TypeResult;
     }
 
-    if (richTextTarget) richTextUnsafeFailure = true;
     const rollback = await rollbackAtomicType(tabId, token, args.text, preparation.snapshots);
     let rollbackResidue = rollback.residue_preview || status.residue_preview;
     let rollbackOk = !!rollback.rollback;
-    if (richTextTarget) {
-      await clearFocusedEditableWithTrustedKeys(tabId, tried);
-      const afterClear = await inspectAtomicDraft(tabId, token);
-      tried.push(...afterClear.tried);
-      rollbackResidue = afterClear.residue_preview || rollbackResidue;
-      rollbackOk = afterClear.empty;
-    }
     lastStatus = {
       ...status,
       rollback: rollbackOk,
       residue_preview: rollbackResidue,
       tried,
     };
-    if (richTextTarget || !rollbackOk) break;
+    if (!rollbackOk) break;
   }
 
   const status = lastStatus;
@@ -1122,6 +1239,189 @@ async function findElement(sessionId: string, args: { query: string; tabId?: num
   }
 }
 
+async function saveToLocal(
+  _sessionId: string,
+  args: { path: string; content: string; encoding?: 'utf8' | 'base64'; create_dirs?: boolean },
+) {
+  if (!args || typeof args.path !== 'string' || !args.path.trim()) {
+    throw new Error('path 参数缺失（必须是绝对路径）');
+  }
+  if (typeof args.content !== 'string') {
+    throw new Error('content 参数缺失（字符串；二进制请用 base64 编码并设 encoding=base64）');
+  }
+  const encoding = args.encoding === 'base64' ? 'base64' : 'utf8';
+  const create_dirs = args.create_dirs !== false;
+
+  const resp = await new Promise<any>((resolve, reject) => {
+    try {
+      chrome.runtime.sendNativeMessage(
+        'com.hermes.filewriter',
+        { op: 'write', path: args.path, content: args.content, encoding, create_dirs },
+        (response) => {
+          const err = chrome.runtime.lastError;
+          if (err) return reject(new Error(err.message || String(err)));
+          resolve(response);
+        },
+      );
+    } catch (e) {
+      reject(e);
+    }
+  }).catch((e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Native Messaging 调用失败：${msg}。请先安装 host：` +
+        `cd hermes-in-chrome && node scripts/install-native-host.mjs <扩展ID>`,
+    );
+  });
+
+  if (!resp || resp.ok !== true) {
+    throw new Error(`写文件失败：${resp?.error || '未知错误'}`);
+  }
+  return {
+    saved: true,
+    path: resp.path,
+    bytes_written: resp.bytes_written,
+    encoding,
+  };
+}
+
+async function extractMarkdown(
+  sessionId: string,
+  args: { tabId?: number; max_chars?: number },
+) {
+  const prevTabId = getSessionTab(sessionId);
+  if (args.tabId != null) bindSessionToTab(sessionId, args.tabId);
+  try {
+    const tabId = await getCurrentTab(sessionId);
+    const maxChars = Math.max(1000, Math.min(2_000_000, args.max_chars ?? 500_000));
+    const result = await runInPage<{ url: string; title: string; markdown: string; truncated: boolean }>(
+      tabId,
+      (limit) => {
+        const SKIP_TAGS = new Set([
+          'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'TEMPLATE', 'SVG', 'CANVAS',
+          'NAV', 'FOOTER', 'ASIDE', 'HEADER', 'FORM',
+        ]);
+
+        function isVisible(el: Element): boolean {
+          const style = window.getComputedStyle(el as HTMLElement);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          if (parseFloat(style.opacity || '1') < 0.05) return false;
+          return true;
+        }
+
+        function inlineText(node: Node): string {
+          if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+          if (node.nodeType !== Node.ELEMENT_NODE) return '';
+          const el = node as Element;
+          if (SKIP_TAGS.has(el.tagName)) return '';
+          const tag = el.tagName;
+          if (tag === 'BR') return '\n';
+          if (tag === 'IMG') {
+            const alt = el.getAttribute('alt') || '';
+            const src = el.getAttribute('src') || '';
+            return src ? `![${alt}](${src})` : '';
+          }
+          if (tag === 'A') {
+            const href = el.getAttribute('href') || '';
+            const text = Array.from(el.childNodes).map(inlineText).join('').trim();
+            if (!text) return '';
+            return href ? `[${text}](${href})` : text;
+          }
+          if (tag === 'CODE' && !el.closest('pre')) {
+            return '`' + (el.textContent || '').replace(/`/g, '\\`') + '`';
+          }
+          if (tag === 'STRONG' || tag === 'B') {
+            const inner = Array.from(el.childNodes).map(inlineText).join('').trim();
+            return inner ? `**${inner}**` : '';
+          }
+          if (tag === 'EM' || tag === 'I') {
+            const inner = Array.from(el.childNodes).map(inlineText).join('').trim();
+            return inner ? `*${inner}*` : '';
+          }
+          return Array.from(el.childNodes).map(inlineText).join('');
+        }
+
+        function blockText(el: Element, depth: number): string[] {
+          if (SKIP_TAGS.has(el.tagName) || !isVisible(el)) return [];
+          const tag = el.tagName;
+          if (/^H[1-6]$/.test(tag)) {
+            const level = Number(tag.slice(1));
+            const text = inlineText(el).trim();
+            return text ? ['#'.repeat(level) + ' ' + text, ''] : [];
+          }
+          if (tag === 'P') {
+            const text = inlineText(el).trim();
+            return text ? [text, ''] : [];
+          }
+          if (tag === 'BLOCKQUOTE') {
+            const text = inlineText(el).trim();
+            if (!text) return [];
+            return [text.split('\n').map((line) => '> ' + line).join('\n'), ''];
+          }
+          if (tag === 'PRE') {
+            const code = (el.textContent || '').replace(/\n+$/, '');
+            const lang = el.querySelector('code')?.className?.match(/language-(\w+)/)?.[1] || '';
+            return ['```' + lang, code, '```', ''];
+          }
+          if (tag === 'HR') return ['---', ''];
+          if (tag === 'UL' || tag === 'OL') {
+            const items: string[] = [];
+            const isOrdered = tag === 'OL';
+            let idx = 1;
+            for (const li of Array.from(el.children)) {
+              if (li.tagName !== 'LI') continue;
+              const prefix = isOrdered ? `${idx}. ` : '- ';
+              const text = inlineText(li).trim().replace(/\n/g, ' ');
+              if (text) items.push('  '.repeat(depth) + prefix + text);
+              idx += 1;
+            }
+            items.push('');
+            return items;
+          }
+          if (tag === 'TABLE') {
+            const rows = Array.from(el.querySelectorAll('tr'));
+            if (!rows.length) return [];
+            const md: string[] = [];
+            rows.forEach((tr, i) => {
+              const cells = Array.from(tr.children).map((cell) => inlineText(cell).trim().replace(/\|/g, '\\|') || ' ');
+              md.push('| ' + cells.join(' | ') + ' |');
+              if (i === 0) md.push('| ' + cells.map(() => '---').join(' | ') + ' |');
+            });
+            md.push('');
+            return md;
+          }
+          // Generic container: recurse
+          const out: string[] = [];
+          for (const child of Array.from(el.children)) {
+            out.push(...blockText(child, depth));
+          }
+          if (out.length === 0) {
+            const text = inlineText(el).trim();
+            if (text) out.push(text, '');
+          }
+          return out;
+        }
+
+        const root = document.querySelector('article, main, [role="main"]') || document.body;
+        const lines = blockText(root as Element, 0);
+        let markdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        const truncated = markdown.length > limit;
+        if (truncated) markdown = markdown.slice(0, limit) + '\n\n…(truncated)';
+        return {
+          url: location.href,
+          title: document.title || '',
+          markdown,
+          truncated,
+        };
+      },
+      [maxChars],
+    );
+    return result;
+  } finally {
+    if (args.tabId != null && prevTabId != null) bindSessionToTab(sessionId, prevTabId);
+  }
+}
+
 async function browserBatch(sessionId: string, args: { actions?: BatchAction[] }) {
   const actions = args.actions || [];
   if (!Array.isArray(actions) || actions.length === 0) return { error: 'actions 参数缺失' };
@@ -1166,6 +1466,8 @@ const TOOLS: Record<ToolName, (sessionId: string, args: any) => Promise<unknown>
   browser_batch: browserBatch,
   get_console_logs: getConsoleLogs,
   key: pressKey,
+  save_to_local: saveToLocal,
+  extract_markdown: extractMarkdown,
 };
 
 export async function execute(sessionId: string, tool: ToolName, args: Record<string, unknown>) {

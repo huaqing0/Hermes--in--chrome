@@ -168,11 +168,48 @@ MINIMAX_API_KEY=...
 
 核心浏览器工具：
 
-`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `screenshot` · `wait` · `browser_batch` · `get_console_logs`
+`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `screenshot` · `wait` · `browser_batch` · `get_console_logs` · `save_to_local` · `extract_markdown`
 
 - `read_page` 和 `ref_id` 操作走 `chrome.scripting.executeScript` 的 **isolated-world**，避免把 a11y tree 暴露到页面主世界
 - `browser_batch` 合并可预测的连续动作，减少工具调用 round-trip
 - `key` 支持 `Meta+Enter` 这类组合键，供 X / Twitter 等页面走键盘提交
+- `type` 对 X / YouTube 等富文本框会临时使用剪贴板粘贴整段文本，并在完成后尽量恢复原剪贴板，避免逐字输入导致缺字或重复
+- `save_to_local` 通过本地 Native Messaging host 把任意文本/二进制内容写到本地任意路径（含 `/Volumes/...`），需要先跑一次安装步骤；`extract_markdown` 把当前 Chrome 页面正文转 Markdown，常和 `save_to_local` 配合做"抓页面 + 落盘"
+
+## 保存抓取内容到本地（Native Messaging）
+
+`save_to_local` 让 agent 把 `fetch_url` 的 HTML、`read_page` 的 a11y 树、`screenshot` 的截图、`extract_markdown` 的 Markdown 等任意内容写到本地任意绝对路径（包括 `/Volumes/...`、`~/Downloads/...`）。Chrome 扩展本身不能直接写文件，所以走 Native Messaging 调用一个本地 Python 小进程 `hermes-filewriter.py`。
+
+**首次安装（一次性）**：
+
+1. 先在 Chrome 加载好 `dist/`，到 `chrome://extensions` 复制 Hermes in Chrome 的 ID（32 位 a-p 小写字母）
+2. 注册 Native Messaging host：
+
+```bash
+npm run native-host:install -- <你的扩展ID>
+```
+
+这个脚本会：
+
+- 把 `scripts/hermes-filewriter.py` 复制到 `~/.hermes/native-messaging/`
+- 在 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.hermes.filewriter.json` 写入 host manifest，并把你的扩展 ID 加进 `allowed_origins`
+- 之后在 Chrome 重新加载扩展即可生效
+
+**安全边界**：
+
+- host 接受绝对路径并展开 `~`，会拒绝写入 `/System` `/usr` `/bin` `/sbin` `/etc` 等系统目录
+- 单次写入最大 64 MB
+- 日志写到 `~/.hermes/logs/hermes-filewriter.log`
+
+**典型调用**：
+
+```text
+ext_extract_markdown()                # 返回 {url, title, markdown}
+→ ext_save_to_local(path="/Volumes/your-ssd/Notes/x.md", content=<上一步.markdown>)
+
+ext_screenshot()                      # 返回 base64
+→ ext_save_to_local(path="~/Downloads/page.jpg", content=<base64>, encoding="base64")
+```
 
 ## 依赖与限制
 
@@ -181,6 +218,7 @@ MINIMAX_API_KEY=...
 - **后端**：Hermes Agent（第三方项目，独立维护），监听 `127.0.0.1:8642`，提供 `/api/ws/extension` WebSocket endpoint
 - 后端的 5 个 provider handler（`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`）以及浏览器工具桥需要在 Hermes Agent 里注册
 - 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动，或用 `npm run backend:watch` 持续守护
+- 扩展请求 `clipboardRead` / `clipboardWrite` 只用于本地富文本输入：临时保存用户原剪贴板、写入要粘贴的文本、完成后恢复；不会把剪贴板内容发送到远程服务
 
 ### WebSocket 协议契约
 

@@ -29,6 +29,7 @@
     "backend:start": "node scripts/hermes-backend.mjs start",
     "backend:ensure": "node scripts/hermes-backend.mjs ensure",
     "backend:watch": "node scripts/hermes-backend.mjs watch",
+    "native-host:install": "node scripts/install-native-host.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

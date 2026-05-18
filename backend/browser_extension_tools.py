@@ -242,7 +242,7 @@ TOOLS: list[tuple[str, str, dict]] = [
             "name": "ext_type",
             "description": (
                 "在输入框/富文本框输入文本，并验证页面真实内容精确等于该文本。"
-                "工具会锁定当前输入作用域，输入前会清空草稿；若验证失败，会尝试回滚本次残留输入。"
+                "工具会锁定当前输入作用域；普通输入框走原生 value，X/YouTube 等富文本框走临时剪贴板粘贴并恢复剪贴板。"
                 "可选 submit=true 只会在验证成功后自动按 Enter。"
                 "若返回错误或 verified 不是 true，必须刷新/重新打开输入页面，不要换 ref_id 重试，更不要继续点击发布/发送。"
                 "在 X/YouTube/真实账号页面严禁输入 test、hello、测试 等与用户原文不同的探测文本。"
@@ -398,6 +398,68 @@ TOOLS: list[tuple[str, str, dict]] = [
             },
         },
     ),
+    (
+        "ext_save_to_local",
+        "save_to_local",
+        {
+            "name": "ext_save_to_local",
+            "description": (
+                "把任意文本/二进制内容写到用户本地文件系统的绝对路径，通过 Chrome Native Messaging "
+                "调用本地 hermes-filewriter 进程。需要用户先跑过 install-native-host 安装步骤。"
+                "用于持久化：ext_fetch_url 拿到的 HTML/文本、ext_read_page 的 a11y 树、"
+                "ext_screenshot 截图（必须 encoding='base64'）、ext_extract_markdown 生成的 Markdown。"
+                "路径必须是绝对路径（如 /Volumes/your-ssd/AI video/foo.html 或 ~/Downloads/x.md，"
+                "~ 会被本地 host 展开到 $HOME）。系统目录（/System /usr /bin /sbin /etc 等）会被拒绝。"
+                "文件名由你自己决定，建议 {host}_{slug}_{YYYYMMDD-HHmmss}.{ext} 之类避免重名。"
+                "成功返回 {saved:true, path, bytes_written, encoding}；失败抛错并提示如何安装 host。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "绝对路径，~ 会被展开。父目录不存在会自动创建（除非 create_dirs=false）",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "要写入的内容。utf8 编码下直接是字符串；base64 编码下是 base64 字符串（用于 PNG/JPEG 等二进制）",
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "enum": ["utf8", "base64"],
+                        "description": "默认 utf8。screenshot 这种二进制必须用 base64",
+                    },
+                    "create_dirs": {
+                        "type": "boolean",
+                        "description": "父目录不存在时是否自动 mkdir -p（默认 true）",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    ),
+    (
+        "ext_extract_markdown",
+        "extract_markdown",
+        {
+            "name": "ext_extract_markdown",
+            "description": (
+                "把当前 Chrome 页面正文转成 Markdown。会跳过 script/style/nav/footer 等噪声，"
+                "保留 h1-h6/p/ul/ol/blockquote/pre/code/table/img/链接。"
+                "返回 {url, title, markdown, truncated}；超长会截断到 max_chars（默认 500000）。"
+                "典型组合：ext_navigate → ext_extract_markdown → ext_save_to_local(path=..., content=md.markdown)。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "截断阈值，默认 500000，最大 2000000",
+                    },
+                },
+            },
+        },
+    ),
 ]
 
 
@@ -491,7 +553,7 @@ EXTRA_SYSTEM_PROMPT = """\
 - ext_read_page(ref_id?, depth?, filter?) — 读当前页 a11y 树，拿可点击元素的 ref_id
 - ext_find(query) — 在大页面里按自然语言找候选 ref_id，再 click/type
 - ext_click(ref_id) — 真实点击
-- ext_type(ref_id, text, submit?) — 原子输入文本，并验证当前输入作用域内内容精确等于目标文本；只有 verified=true 才能继续提交
+- ext_type(ref_id, text, submit?) — 原子输入文本；普通输入框走原生 value，X/YouTube 富文本框走临时剪贴板粘贴并恢复剪贴板，验证当前输入作用域内内容精确等于目标文本；只有 verified=true 才能继续提交
 - ext_key(key) — 按键盘快捷键，如 'Enter'、'Meta+Enter'（Mac Cmd+Enter）、'Ctrl+Enter'
 - ext_browser_batch(actions) — 批量执行多个可预测浏览器动作，减少 round-trip
 - ext_scroll / ext_scroll_to / ext_screenshot / ext_wait / ext_get_console_logs
@@ -502,8 +564,8 @@ EXTRA_SYSTEM_PROMPT = """\
 - 用户说「查/告诉我 X」→ 倾向 web_search 或 ext_fetch_url
 - 搜索引擎结果页是 SPA，fetch_url 拿不到，用 web_search 或浏览器路径
 - YouTube/Twitter/Notion 等 SPA 必须走浏览器（ext_navigate + ext_read_page + ext_click）
-- **X/Twitter 发帖**：ext_navigate("https://x.com/compose/post") → ext_read_page(filter="interactive") → ext_type(ref_id=帖子文本, text=用户原文)。只能输入用户明确要求发布的原文，严禁为了测试输入 `test`、`hello`、`测试`、占位文字或任何与用户原文不同的内容。只有 ext_type 返回 verified=true，且 actual_text_preview 精确等于用户要发的文本后，才能 ext_key(key='Meta+Enter') 或点击“发帖/全部发帖”。如果 ext_type 报错或 verified 不是 true，必须刷新或重新打开 compose 页面后再从头观察，不能直接换另一个“帖子文本” ref_id 重试，更不能提交。ext_key 只代表按键已发送，不代表发布成功；按下后必须 ext_wait(1000-3000) + ext_read_page 复查：弹窗关闭、新帖出现在时间线/个人页，才可以说发布成功。如果弹窗仍存在、发帖按钮仍不可用、或草稿文本与用户文本不完全一致，必须告诉用户没有发布成功。只能点击明确叫“发帖”或“全部发帖”的按钮；“添加帖子”是添加 thread 的第二条，不是发布；“下一步”通常不是最终发布。不要反复重复输入同一段文字。
-- **YouTube 评论**：先点击评论框 → ext_read_page(filter="interactive") → ext_type(ref_id=评论文本框, text=用户原文)。只能输入用户明确要求评论的原文，严禁输入 `test`、`hello`、`测试`、占位文字或任何与用户原文不同的内容。只有 verified=true，且 actual_text_preview 精确等于用户评论文本后，才能点击“评论”/“Comment”；否则刷新或重新打开评论框后再从头观察，禁止提交空评论或重复评论。点击后必须 ext_wait + ext_read_page 复查评论是否出现，不能只因为点击成功就报告成功。
+- **X/Twitter 发帖**：ext_navigate("https://x.com/compose/post") → ext_read_page(filter="interactive") → ext_type(ref_id=帖子文本, text=用户原文)。X 富文本会通过临时剪贴板粘贴整段文本，避免逐字输入缺字或重复。只能输入用户明确要求发布的原文，严禁为了测试输入 `test`、`hello`、`测试`、占位文字或任何与用户原文不同的内容。只有 ext_type 返回 verified=true、strategy 为 clipboard_paste，且 actual_text_preview 精确等于用户要发的文本后，才能 ext_key(key='Meta+Enter') 或点击“发帖/全部发帖”。如果 ext_type 报错或 verified 不是 true，必须刷新或重新打开 compose 页面后再从头观察，不能直接换另一个“帖子文本” ref_id 重试，更不能提交。ext_key 只代表按键已发送，不代表发布成功；按下后必须 ext_wait(1000-3000) + ext_read_page 复查：弹窗关闭、新帖出现在时间线/个人页，才可以说发布成功。如果弹窗仍存在、发帖按钮仍不可用、或草稿文本与用户文本不完全一致，必须告诉用户没有发布成功。只能点击明确叫“发帖”或“全部发帖”的按钮；“添加帖子”是添加 thread 的第二条，不是发布；“下一步”通常不是最终发布。不要反复重复输入同一段文字。
+- **YouTube 评论**：先点击评论框 → ext_read_page(filter="interactive") → ext_type(ref_id=评论文本框, text=用户原文)。YouTube 富文本会通过临时剪贴板粘贴整段文本。只能输入用户明确要求评论的原文，严禁输入 `test`、`hello`、`测试`、占位文字或任何与用户原文不同的内容。只有 verified=true，且 actual_text_preview 精确等于用户评论文本后，才能点击“评论”/“Comment”；否则刷新或重新打开评论框后再从头观察，禁止提交空评论或重复评论。点击后必须 ext_wait + ext_read_page 复查评论是否出现，不能只因为点击成功就报告成功。
 
 # 严格按字面理解
 - 「最早 / 第一支 / first / oldest」→ 按时间最远那个，不是最新
