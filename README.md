@@ -1,41 +1,56 @@
-# Hermes in Chrome
+# Hermes in chrome
 
-> Hermes Agent 住在 Chrome 里 — 浏览器自动化扩展。
-> 灵感来自 Claude in Chrome v1.0.70，接入本地 Hermes Backend (`127.0.0.1:8642`)。
+> Hermes Agent lives in your Chrome sidebar — an AI browser automation extension.
+> Inspired by Claude in Chrome v1.0.70, talks to a local [Hermes Agent](https://github.com/huaqing0/hermes-agent) over `ws://127.0.0.1:8642`.
+
+[中文版 →](./README.zh.md)
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-blue.svg)](./LICENSE)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
+[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
 
 > **License**: source-available under [PolyForm Noncommercial 1.0.0](./LICENSE).
 > Free for personal / educational / non-profit use.
 > **Commercial use** requires a separate license — see [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md).
 
+<!-- TODO: replace with real screenshots/GIFs once recorded.
+     Suggested order:
+       1. Sidebar in CP2077 theme — initial state with onboarding bar
+       2. Sidebar in Synthwave theme — mid-conversation with a tool call
+       3. Animated GIF: open sidepanel → type "find latest AI news" → watch
+          agent open a tab, read the a11y tree, stream the reply
+-->
+
+![Screenshot placeholder](./docs/screenshot-placeholder.png)
+
 ---
 
-## 三件核心能力
+## Three core capabilities
 
-1. **住在网页里** — Chrome sidepanel 永驻右侧，AI 流式回复
-2. **实时感知页面** — 每次 action 后 agent 主动 `read_page` 拿 a11y tree
-3. **自主开 tab** — 在专属 Hermes Tab Group 里串/并行调研，不打扰用户
+1. **Lives in the page** — a persistent Chrome sidepanel with streaming AI replies
+2. **Sees the page in real time** — after each action the agent proactively `read_page`s the accessibility tree
+3. **Opens its own tabs** — researches in series/parallel inside a dedicated Hermes Tab Group without disturbing you
 
-## 架构
+## Architecture
 
 ```
 sidepanel (React + Vite)
    ↑↓
-Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
-   ├─ chrome.debugger (CDP: 截图/点击/输入)
-   ├─ chrome.tabGroups (会话隔离)
-   └─ content scripts (a11y-tree isolated world 自动注入)
+Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
+   ├─ chrome.debugger (CDP: screenshot / click / type)
+   ├─ chrome.tabGroups (per-session isolation)
+   └─ content scripts (a11y-tree, injected into isolated world)
 ```
 
-## 安装
+## Install
 
-> 前提：已经装好 [Hermes Agent](https://github.com/huaqing0/hermes-agent)（默认装在 `~/.hermes/hermes-agent/`）。
+> **Prerequisite**: install [Hermes Agent](https://github.com/huaqing0/hermes-agent) first (default location `~/.hermes/hermes-agent/`).
+>
+> **Platform**: currently only macOS is fully supported. Windows / Linux native-host install is on the roadmap.
 
-三步走：
+Three steps:
 
-1. **克隆 + 构建**：
+1. **Clone + build**:
 
    ```bash
    git clone https://github.com/huaqing0/hermes-in-chrome.git
@@ -43,103 +58,53 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
    npm install && npm run build
    ```
 
-2. **Chrome 加载扩展**：`chrome://extensions` → 右上角开「开发者模式」→ 「加载已解压的扩展程序」→ 选本项目的 `dist/` 目录
+2. **Load the extension in Chrome**: open `chrome://extensions` → toggle **Developer mode** → click **Load unpacked** → pick the `dist/` directory generated above.
 
-3. **`Cmd+H` / `Ctrl+H` 打开 sidepanel** —— 按顶部状态条的引导一步步跑命令即可，**不需要自己抄扩展 ID 或翻 README 找命令**
+3. **Press `Cmd+H` (Mac) / `Ctrl+H` (Win/Linux)** to open the sidepanel — then **follow the prompts in the status bar at the top**. You don't need to copy your extension ID by hand or hunt for command names in the README.
 
-状态条会依次引导你：
+The status bar walks you through:
 
-- ① 启动本地 Hermes 后端（一键复制 `npm run backend:ensure` 到终端跑）
-- ② 注册 Native Messaging host（自动填好你的扩展 ID，一键复制整条命令）
-- ③ 选 provider / 填 API Key（或走 OAuth）
+- ① start the local Hermes backend (one-click copy of `npm run backend:ensure`)
+- ② register the Native Messaging host (your extension ID is pre-filled, copy the whole command in one click)
+- ③ pick a provider / paste an API key (or use OAuth)
 
-三项全绿后状态条会自动折叠成一行小绿点 `● 后端 ● Host ● Provider`，点击可重新展开。
+Once all three turn green the bar collapses to a single line `● Backend ● Host ● Provider`. Click to re-expand.
 
-开发模式（热重载）：
+## Themes
 
-```bash
-npm start
-```
+Two built-in themes; the first button in the header toggles them:
 
-（普通使用走上面三步即可；`npm start` 适合改 React 代码时热重载用。）
+- **CP2077 Dystopia** — static yellow-black hazard frames, Rajdhani industrial type, octagonal clipped components
+- **80s Synthwave** — animated neon edge flow, magenta/cyan gradients, Orbitron + VT323 type, Tron perspective grid
 
-## 后端自动检测和启动
+Theme is persisted in `chrome.storage.local`.
 
-Hermes in Chrome 需要本地 Hermes gateway，默认连接：
+## Language
 
-```text
-ws://127.0.0.1:8642/api/ws/extension
-```
+Sidepanel UI ships with **runtime zh/en switching**. The header button (`EN` while showing Chinese, `中` while showing English) flips the whole UI instantly. Default follows `chrome.i18n.getUILanguage()`. Persisted in `chrome.storage.local`.
 
-检查后端是否已启动：
+Extension name / description on `chrome://extensions` follow your browser UI language via Chrome's standard `_locales`.
 
-```bash
-npm run backend:status
-```
+## Providers and models
 
-如果没有启动，自动在后台启动：
+The sidepanel supports provider + model two-level selection. Click the gear ⚙ button to open settings.
 
-```bash
-npm run backend:ensure
-```
+**API Key providers**: DeepSeek / Anthropic Claude / Google Gemini / xAI Grok / Alibaba DashScope (Qwen) / Kimi (Moonshot) / Z.ai (GLM) / MiniMax / Custom OpenAI-compatible
 
-如果你希望本地使用时后端被杀掉后自动拉起，开一个终端运行：
+**OAuth providers**: OpenAI Codex / Qwen OAuth / Google Gemini CLI / MiniMax OAuth / Nous Portal — click "Log in" and it opens the device-code URL, the extension polls for completion.
 
-```bash
-npm run backend:watch
-```
+**Auto**: defaults to whatever the Hermes backend has configured (no override from the frontend).
 
-这个脚本会：
+### Two ways to configure an API key
 
-1. 检测 `127.0.0.1:8642` 是否可连接
-2. 如果已启动，直接退出
-3. 如果未启动，优先使用 `~/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main gateway run`
-4. 找不到本地 venv 时，回退到 PATH 里的 `hermes gateway run`
-5. 日志写到 `~/.hermes/logs/hermes-in-chrome-gateway.log`
-
-`backend:watch` 会复用同一套检测/启动逻辑，并在前台持续守护；普通一次性启动用 `backend:ensure`。
-
-如果你的 Hermes Agent 不在默认位置，可以指定路径：
-
-```bash
-HERMES_AGENT_DIR=/path/to/hermes-agent npm run backend:ensure
-```
-
-如果你的 gateway 不使用默认端口：
-
-```bash
-HERMES_GATEWAY_PORT=8642 npm run backend:ensure
-```
-
-## 主题
-
-侧边栏自带两套主题，header 第一个按钮切换：
-
-- **CP2077 Dystopia** — 静态黄黑 hazard 边框、Rajdhani 工业字体、八角切角组件
-- **80s Synthwave** — 动态霓虹流光边框、紫粉渐变、Orbitron + VT323 字体、Tron 透视网格
-
-主题持久化到 `chrome.storage.local`。
-
-## 模型与 Provider
-
-侧边栏支持 provider + model 两级切换，齿轮 ⚙ 按钮进入配置：
-
-**API Key providers**：DeepSeek / Anthropic Claude / Google Gemini / xAI Grok / Alibaba DashScope (Qwen) / Kimi (Moonshot) / Z.ai (GLM) / MiniMax / Custom OpenAI-compatible
-
-**OAuth providers**：OpenAI Codex / Qwen OAuth / Google Gemini CLI / MiniMax OAuth / Nous Portal — 点击「登录 X」会自动打开 device code 链接，扩展会轮询登录状态
-
-**Auto**：默认走 Hermes 后端当前配置（不在前端覆盖）
-
-### 配置 API Key 的两种方式
-
-**推荐：放在后端**（不会进 chrome.storage，不会进对话历史）：
+**Recommended: keep keys on the backend** (never enter `chrome.storage`, never enter the conversation log):
 
 ```bash
 cp .env.example ~/.hermes/.env
-# 然后编辑 ~/.hermes/.env，填入你自己的 key
+# Edit ~/.hermes/.env and paste your keys
 ```
 
-`.env.example` 示例：
+`.env.example`:
 
 ```bash
 DEEPSEEK_API_KEY=...
@@ -152,96 +117,129 @@ GLM_API_KEY=...
 MINIMAX_API_KEY=...
 ```
 
-**前端覆盖**：齿轮 ⚙ → 选 provider → 输入 API Key / Base URL → **测试连接**（会真 ping provider，识别 401/403）→ 保存
+**Frontend override**: gear ⚙ → pick provider → fill API Key / Base URL → **Test connection** (actually pings the provider, surfaces 401/403) → Save.
 
-前端覆盖的 key 只保存在 `chrome.storage.local`，并且只发送给 `127.0.0.1` 本地后端，**不会**写入对话历史或仓库。
+Frontend-overridden keys are stored only in `chrome.storage.local` and sent only to the `127.0.0.1` local backend. They **never** enter the conversation log or this repo.
 
 ### Custom / Local
 
-适配 Ollama、vLLM、LM Studio、私有 OpenAI-compatible 网关：选 `Custom / Local` → 填 Base URL + Model ID + 可选 API Key。
+Works with Ollama, vLLM, LM Studio, any private OpenAI-compatible gateway: pick `Custom / Local` → fill Base URL + Model ID + optional API Key.
 
-## 工具集
+## Tool set
 
-核心浏览器工具：
+Core browser tools:
 
 `fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `screenshot` · `wait` · `browser_batch` · `get_console_logs` · `save_to_local` · `extract_markdown`
 
-- `read_page` 和 `ref_id` 操作走 `chrome.scripting.executeScript` 的 **isolated-world**，避免把 a11y tree 暴露到页面主世界
-- `browser_batch` 合并可预测的连续动作，减少工具调用 round-trip
-- `key` 支持 `Meta+Enter` 这类组合键，供 X / Twitter 等页面走键盘提交
-- `type` 对 X / YouTube 等富文本框会临时使用剪贴板粘贴整段文本，并在完成后恢复剪贴板；如果只能恢复纯文本，会在工具结果里标明 `clipboard_restore_mode`
-- `save_to_local` 通过本地 Native Messaging host 把任意文本/二进制内容写到本地任何用户可写位置（除系统目录和 `~/.ssh` 等敏感目录外），无需任何配置，需要先跑一次安装步骤；`extract_markdown` 把当前 Chrome 页面正文转 Markdown，常和 `save_to_local` 配合做"抓页面 + 落盘"
+- `read_page` and `ref_id` operations run via `chrome.scripting.executeScript`'s **isolated world** so the a11y tree is never exposed to the page's main world
+- `browser_batch` collapses predictable consecutive actions to cut tool-call round-trips
+- `key` supports combos like `Meta+Enter` for keyboard-submit on X / Twitter
+- `type` uses the clipboard temporarily for rich-text fields on X / YouTube etc., and restores the clipboard afterwards. If only plain-text restore is possible, the result includes `clipboard_restore_mode`
+- `save_to_local` writes any text/binary content anywhere the user has filesystem permission (except system paths and sensitive user dirs — see [Save scraped content locally](#save-scraped-content-locally-native-messaging) below); needs a one-time install. `extract_markdown` turns the current Chrome page into Markdown — typical pair with `save_to_local` for "scrape page + persist".
 
-## 保存抓取内容到本地（Native Messaging）
+## Save scraped content locally (Native Messaging)
 
-`save_to_local` 让 agent 把 `fetch_url` 的 HTML、`read_page` 的 a11y 树、`screenshot` 的截图、`extract_markdown` 的 Markdown 等内容写到本地文件。路径可以是用户文件系统下的任何位置（`~/Downloads/`、`/Volumes/your-ssd/`、`/tmp/` 等都可以），无需任何配置。Chrome 扩展本身不能直接写文件，所以走 Native Messaging 调用一个本地 Python 小进程 `hermes-filewriter.py`。
+`save_to_local` lets the agent persist `fetch_url` HTML, `read_page` a11y trees, `screenshot` PNGs, `extract_markdown` output, etc. The path can be **anywhere on your filesystem** (`~/Downloads/`, `/Volumes/external-ssd/`, `/tmp/`, etc.) — **no configuration required**. Chrome extensions can't write files directly, so this goes through Native Messaging to a small local Python process `hermes-filewriter.py`.
 
-**首次安装（一次性）**：推荐打开 sidepanel，按顶部状态条引导走，**它会自动填好你的扩展 ID 并给出一键复制的命令**。如果你想手动跑：
+**First-time install (one-shot)**: easiest path is to follow the prompt in the sidepanel's onboarding status bar — it auto-fills your extension ID and the project path. If you'd rather do it by hand:
 
-1. 到 `chrome://extensions` 复制 Hermes in Chrome 的 ID（32 位 a-p 小写字母）
-2. 注册 Native Messaging host：
+1. Copy your Hermes in chrome ID from `chrome://extensions` (32 lowercase letters a-p)
+2. Register the Native Messaging host:
 
    ```bash
-   npm run native-host:install -- <你的扩展ID>
+   npm run native-host:install -- <your-extension-id>
    ```
 
-这个脚本会：
+What this does:
 
-- 把 `scripts/hermes-filewriter.py` 复制到 `~/.hermes/native-messaging/`
-- 在 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.hermes.filewriter.json` 写入 host manifest，并把你的扩展 ID 加进 `allowed_origins`
-- 之后在 Chrome 重新加载扩展即可生效
+- Copies `scripts/hermes-filewriter.py` to `~/.hermes/native-messaging/`
+- Writes a host manifest to `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.hermes.filewriter.json` with your extension ID in `allowed_origins`
+- Records the repo root to `~/.hermes/hermes-in-chrome.json` so the sidepanel can emit fully-resolved `cd … && npm run …` one-liners
+- Reload the extension on `chrome://extensions` afterwards
 
-**安全边界**：
+**Security boundary**:
 
-- host 接受绝对路径并展开 `~`，可以写到用户文件系统下任何位置；系统目录（`/System`、`/usr` 等）和敏感用户目录（`~/.ssh`、`~/.aws`、浏览器 profile、`~/.zshrc` 等 shell rc）始终被拒绝，防止 prompt injection 取走凭据或劫持 shell
-- 默认拒绝覆盖已有文件；确实要覆盖时，工具调用必须显式传 `overwrite=true`
-- 单次写入最大 64 MB
-- 日志写到 `~/.hermes/logs/hermes-filewriter.log`
+- Host accepts absolute paths and expands `~`. Writes are allowed anywhere on the user filesystem **except** system paths (`/System`, `/usr`, `/etc`, `/Library/Apple`, etc.) and sensitive user dirs (`~/.ssh`, `~/.aws`, `~/.gnupg`, browser profiles, `~/.zshrc` and other shell rc files). This blocks prompt-injection attempts to steal credentials or hijack a shell.
+- Refuses to overwrite existing files unless the tool call explicitly passes `overwrite=true`
+- Max 64 MB per write
+- Log at `~/.hermes/logs/hermes-filewriter.log`
 
-**典型调用**：
+**Typical use**:
 
 ```text
-ext_extract_markdown()                # 返回 {url, title, markdown}
-→ ext_save_to_local(path="~/Downloads/page.md", content=<上一步.markdown>)
+ext_extract_markdown()                # returns {url, title, markdown}
+→ ext_save_to_local(path="~/Downloads/page.md", content=<step-1.markdown>)
 
-ext_screenshot()                      # 返回 base64
+ext_screenshot()                      # returns base64
 → ext_save_to_local(path="~/Downloads/page.jpg", content=<base64>, encoding="base64")
 ```
 
-## 依赖与限制
+## Privacy & Permissions
 
-**这是一个 Chrome 扩展前端**，需要配套后端：
+This extension is **local-first**. Nothing in the conversation, the page DOM, screenshots, or your API keys is sent to anywhere other than `127.0.0.1:8642` (your local Hermes Agent). Your LLM provider of choice receives only what the Hermes backend explicitly relays.
 
-- **后端**：Hermes Agent（第三方项目，独立维护），监听 `127.0.0.1:8642`，提供 `/api/ws/extension` WebSocket endpoint
-- 后端的 5 个 provider handler（`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`）以及浏览器工具桥需要在 Hermes Agent 里注册
-- 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动，或用 `npm run backend:watch` 持续守护
-- 扩展请求 `clipboardRead` / `clipboardWrite` 只用于本地富文本输入：临时保存用户原剪贴板、写入要粘贴的文本、完成后恢复；能使用完整 Clipboard API 时会保留图片/富文本等类型，否则降级为纯文本恢复，并在工具结果里标明；不会把剪贴板内容发送到远程服务
+The MV3 manifest requests these permissions, each for a specific reason:
 
-### WebSocket 协议契约
+| Permission | Why we need it |
+|------------|----------------|
+| `sidePanel` | Render the chat UI in Chrome's sidebar |
+| `storage` | Persist theme / language / API key overrides locally |
+| `activeTab`, `tabs` | Read the URL/title of the current tab so the agent has context |
+| `scripting` | Inject `a11y-tree.ts` (isolated world) so the agent can see the page DOM as structured data |
+| `debugger` | Drive the page via Chrome DevTools Protocol (real screenshots, real Cmd+V paste, real mouse clicks). Required for any tool that **acts** on a page rather than just reads it |
+| `tabGroups` | Group agent-opened tabs into a dedicated "Hermes" group so research doesn't pollute your workspace |
+| `webNavigation` | Detect when an agent-driven page finishes loading before reading it |
+| `alarms`, `offscreen` | Keep the service worker alive for in-flight LLM streams; the offscreen document hosts clipboard read/write for rich-text input |
+| `notifications` | Surface long-running task completion / errors |
+| `clipboardRead`, `clipboardWrite` | Snapshot your clipboard before pasting rich text into X / YouTube etc., then restore it. **Clipboard contents are never sent off-device.** When full snapshot/restore isn't supported the result is marked `clipboard_restore_mode: 'text'` |
+| `nativeMessaging` | Talk to `hermes-filewriter` (a separate Python process) to persist files locally. Without this `save_to_local` is unavailable |
+| `host_permissions: <all_urls>` | The agent needs to operate on any URL you point it at; we can't predict in advance which sites you'll use |
 
-扩展跟后端通过 WebSocket 通信，消息格式见 [`src/types/messages.ts`](./src/types/messages.ts)。理论上你可以写一个兼容的后端替代 Hermes Agent，只要实现：
+What we do **not** do:
 
-- `hello` / `user_message` / `tool_result` / `tool_error` / `stop` / `ping`（client → server）
-- `thinking_delta` / `text_delta` / `tool_call` / `tool_approval_request` / `message_complete` / `error` / `provider_*_result` / `pong`（server → client）
+- No analytics, telemetry, or external tracking beacons
+- No third-party CDN or web font (sidepanel uses system fonts only)
+- No background page activity when the sidepanel is closed beyond the WebSocket heartbeat to your local Hermes backend
+- The `debugger` permission triggers Chrome's "this browser is being controlled by a debugger" banner whenever the agent is running — that's normal and you can always click the banner to stop
 
-## 项目结构
+## Dependencies and limits
+
+**This is a Chrome extension frontend**; it needs a backend:
+
+- **Backend**: [Hermes Agent](https://github.com/huaqing0/hermes-agent) (third-party project, maintained separately), listening on `127.0.0.1:8642`, exposing `/api/ws/extension`
+- The 5 provider handlers (`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`) and the browser tool bridge need to be registered inside Hermes Agent
+- The extension itself **cannot** spawn local Python processes; run `npm run backend:ensure` from your terminal, or `npm run backend:watch` for a foreground watchdog
+- We only ask for `clipboardRead` / `clipboardWrite` for local rich-text input (snapshot original → write payload → restore). Clipboard contents are never sent to a remote service.
+
+### WebSocket protocol contract
+
+The extension talks to the backend over WebSocket; message shapes live in [`src/types/messages.ts`](./src/types/messages.ts). You could in principle write a compatible backend in place of Hermes Agent, as long as it implements:
+
+- `hello` / `user_message` / `tool_result` / `tool_error` / `stop` / `ping` (client → server)
+- `thinking_delta` / `text_delta` / `tool_call` / `tool_approval_request` / `message_complete` / `error` / `provider_*_result` / `pong` (server → client)
+
+## Project layout
 
 ```
 src/
-├── sidepanel/        # React UI (App.tsx, styles.css, index.html)
-├── background/       # Service Worker (WS 连接、消息路由、tab 管理)
-├── content/          # 内容脚本 (a11y-tree.ts, visual-indicator.ts)
-├── offscreen/        # offscreen document
-├── types/            # TypeScript 类型定义
+├── sidepanel/        # React UI (App.tsx, styles.css, i18n.ts, index.html)
+├── background/       # Service Worker (WS, message routing, tab management)
+├── content/          # Content scripts (a11y-tree.ts, visual-indicator.ts)
+├── offscreen/        # Offscreen document (clipboard snapshot/restore)
+├── types/            # TypeScript type definitions
 └── manifest.json     # MV3 manifest
-backend/              # 后端要加载的浏览器工具桥（Python，要被 Hermes Agent import）
-public/icons/         # 扩展图标
+backend/              # Browser-tool bridge to be imported by Hermes Agent (Python)
+scripts/              # Backend launcher, native host installer, filewriter
+public/icons/         # Extension icons
+_locales/             # Chrome i18n messages (manifest name/description)
 ```
 
 ## License
 
 [PolyForm Noncommercial License 1.0.0](./LICENSE)
 
-商用授权见 [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md)。
+Commercial use: see [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md).
 
-贡献指南见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+Contributions: see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+Security disclosures: see [SECURITY.md](./SECURITY.md).
