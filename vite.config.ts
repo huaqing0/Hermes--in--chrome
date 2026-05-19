@@ -6,5 +6,5 @@ import manifest from './src/manifest.json' with { type: 'json' };
 export default defineConfig({
   plugins: [react(), crx({ manifest })],
   server: { port: 5173, strictPort: true, hmr: { port: 5174 } },
-  build: { rollupOptions: { input: { offscreen: 'src/offscreen/offscreen.html' } } },
+  build: { rolldownOptions: { input: { offscreen: 'src/offscreen/offscreen.html' } } },
 });
