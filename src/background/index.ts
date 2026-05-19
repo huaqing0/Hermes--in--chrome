@@ -305,13 +305,24 @@ chrome.runtime.onMessage.addListener((msg: SidepanelMessage, _sender, sendRespon
       if (meta) meta.isRunning = true;
       // 从 sidepanel 传来的消息里直接拿 settings（per-session）
       const settings = msg.settings || {};
-      ws.send({
+      const sent = ws.send({
         type: 'user_message',
         session_id: sid,
         text: msg.text,
         context: { url: activeTab.url, title: activeTab.title },
         settings,
       });
+      if (!sent) {
+        if (meta) meta.isRunning = false;
+        broadcastToSessionGroup(sid, { type: 'HIDE_AGENT_INDICATORS' });
+        sendResponse({
+          ok: false,
+          error: 'Hermes backend is not connected; the message was not sent. Run `npm run backend:ensure` and try again.',
+          session: sid,
+          groupId: tg.getSessionGroup(sid) ?? tabGroupId(activeTab),
+        });
+        return;
+      }
       // 只给该 session 的 group 显示 indicators
       broadcastToSessionGroup(sid, { type: 'SHOW_AGENT_INDICATORS' });
       sendResponse({ ok: true, session: sid, groupId: tg.getSessionGroup(sid) ?? tabGroupId(activeTab) });
@@ -354,7 +365,7 @@ chrome.runtime.onMessage.addListener((msg: SidepanelMessage, _sender, sendRespon
         sendResponse({ ok: true, sessionId: created.sessionId, groupId: created.groupId });
         return;
       }
-      sendResponse({ ok: false, error: '没有找到 active tab' });
+      sendResponse({ ok: false, error: 'No active tab' });
     } else if (msg.type === 'SP_SELECT_SESSION') {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       if (tab?.id != null) {
@@ -362,7 +373,7 @@ chrome.runtime.onMessage.addListener((msg: SidepanelMessage, _sender, sendRespon
         sendResponse({ ok: true, sessionId: selected.sessionId, groupId: selected.groupId });
         return;
       }
-      sendResponse({ ok: false, error: '没有找到 active tab' });
+      sendResponse({ ok: false, error: 'No active tab' });
     } else if (msg.type === 'SP_TOOL_APPROVAL') {
       ws.send({ type: 'tool_approval', id: msg.id, approved: msg.approved, session_id: msg.session_id });
       sendResponse({ ok: true });
@@ -398,6 +409,38 @@ chrome.runtime.onMessage.addListener((msg: SidepanelMessage, _sender, sendRespon
         sessionId: currentSession,
         groupId: currentSession ? tg.getSessionGroup(currentSession) : undefined,
       });
+    } else if (msg.type === 'SP_ONBOARDING_CHECK_BACKEND') {
+      let status: 'healthy' | 'offline' = 'offline';
+      try {
+        const r = await fetch('http://127.0.0.1:8642/health', {
+          signal: AbortSignal.timeout(1500),
+        });
+        if (r.ok) status = 'healthy';
+      } catch {}
+      sendResponse({ ok: true, status, wsConnected: ws.isConnected() });
+    } else if (msg.type === 'SP_ONBOARDING_CHECK_NATIVE_HOST') {
+      const result = await new Promise<{ installed: boolean; error?: string; repoRoot?: string | null }>((resolve) => {
+        try {
+          chrome.runtime.sendNativeMessage('com.hermes.filewriter', { op: 'ping' }, (response) => {
+            const err = chrome.runtime.lastError;
+            if (err) {
+              resolve({ installed: false, error: err.message || String(err) });
+              return;
+            }
+            const r = response as { pong?: boolean; repoRoot?: string | null } | null;
+            if (r && r.pong === true) {
+              resolve({ installed: true, repoRoot: r.repoRoot ?? null });
+            } else {
+              resolve({ installed: false, error: 'unexpected response' });
+            }
+          });
+        } catch (e) {
+          resolve({ installed: false, error: e instanceof Error ? e.message : String(e) });
+        }
+      });
+      sendResponse({ ok: true, ...result });
+    } else if (msg.type === 'SP_ONBOARDING_GET_EXTENSION_ID') {
+      sendResponse({ ok: true, id: chrome.runtime.id });
     }
   })();
   return true;

@@ -1,0 +1,18 @@
+{
+  "extName": {
+    "message": "Hermes in chrome",
+    "description": "扩展名称（chrome://extensions 显示）"
+  },
+  "extDesc": {
+    "message": "AI 浏览器代理 — Hermes 住在你的 Chrome 侧边栏里。",
+    "description": "扩展简短描述"
+  },
+  "extActionTitle": {
+    "message": "打开 Hermes 侧边栏",
+    "description": "工具栏按钮 tooltip"
+  },
+  "extCommandToggleSidepanel": {
+    "message": "切换 Hermes 侧边栏",
+    "description": "切换侧边栏的快捷键说明"
+  }
+}

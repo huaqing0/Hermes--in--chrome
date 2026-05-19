@@ -97,7 +97,10 @@ export type SidepanelMessage =
   | { type: 'SP_SWITCH_TAB'; tabId: number }
   | { type: 'SP_NEW_CHAT' }
   | { type: 'SP_SELECT_SESSION'; sessionId: string }
-  | { type: 'SP_TOOL_APPROVAL'; id: string; approved: boolean; session_id: string };
+  | { type: 'SP_TOOL_APPROVAL'; id: string; approved: boolean; session_id: string }
+  | { type: 'SP_ONBOARDING_CHECK_BACKEND' }
+  | { type: 'SP_ONBOARDING_CHECK_NATIVE_HOST' }
+  | { type: 'SP_ONBOARDING_GET_EXTENSION_ID' };
 
 export type SwToSidepanelMessage =
   | { type: 'SW_DELTA'; channel: 'thinking' | 'text'; text: string; session_id?: string }

@@ -2,12 +2,72 @@ import { useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
 import type { ProviderRequest, ProviderStatus, SidepanelMessage, SwToSidepanelMessage, UserSettings } from '../types/messages';
 import { HISTORY_STORAGE_KEY, type Entry, type StoredConversation, type StoredConversationMap } from '../types/history';
+import { useT } from './i18n';
 
 marked.setOptions({ breaks: true, gfm: true });
 
+const ALLOWED_MD_TAGS = new Set([
+  'A', 'P', 'BR', 'STRONG', 'B', 'EM', 'I', 'DEL', 'S',
+  'CODE', 'PRE', 'BLOCKQUOTE', 'UL', 'OL', 'LI',
+  'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
+]);
+const ALLOWED_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
+function sanitizeMarkdownHtml(html: string): string {
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
+  const root = doc.body.firstElementChild;
+  if (!root) return '';
+
+  function clean(node: Node): void {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      const el = child as HTMLElement;
+      if (!ALLOWED_MD_TAGS.has(el.tagName)) {
+        if (['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'IMG', 'SVG', 'MATH'].includes(el.tagName)) {
+          el.remove();
+        } else {
+          clean(el);
+          el.replaceWith(...Array.from(el.childNodes));
+        }
+        continue;
+      }
+
+      for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on') || name === 'style' || name === 'srcdoc') {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        if (el.tagName === 'A' && name === 'href') {
+          try {
+            const url = new URL(attr.value, window.location.href);
+            if (!ALLOWED_URL_PROTOCOLS.has(url.protocol)) el.removeAttribute(attr.name);
+          } catch {
+            el.removeAttribute(attr.name);
+          }
+          continue;
+        }
+        if (el.tagName === 'A' && (name === 'title' || name === 'href')) continue;
+        if ((el.tagName === 'TH' || el.tagName === 'TD') && (name === 'colspan' || name === 'rowspan')) continue;
+        if (name === 'title') continue;
+        el.removeAttribute(attr.name);
+      }
+      if (el.tagName === 'A' && el.getAttribute('href')) {
+        el.setAttribute('target', '_blank');
+        el.setAttribute('rel', 'noreferrer noopener');
+      }
+      clean(el);
+    }
+  }
+
+  clean(root);
+  return root.innerHTML;
+}
+
 function renderMd(text: string): { __html: string } {
   try {
-    return { __html: marked.parse(text, { async: false }) as string };
+    return { __html: sanitizeMarkdownHtml(marked.parse(text, { async: false }) as string) };
   } catch {
     return { __html: text.replace(/&/g, '&amp;').replace(/</g, '&lt;') };
   }
@@ -29,39 +89,48 @@ type ProviderOption = {
 type ProviderCredential = { apiKey?: string; baseUrl?: string };
 type ProviderCredentialStore = Record<string, ProviderCredential>;
 
+function providerStatusKey(provider: string, model?: string, credential?: { apiKey?: string; baseUrl?: string }): string {
+  return [
+    provider,
+    model || '',
+    credential?.apiKey?.trim() ? 'key' : '',
+    credential?.baseUrl?.trim() || '',
+  ].join(':');
+}
+
 const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     value: 'auto',
-    label: 'Auto / Hermes 默认配置',
+    label: 'Auto / Hermes default',
     short: 'AUTO',
-    description: '使用 Hermes 后端当前 model.provider / model.default 配置。',
+    description: 'Use the Hermes backend\'s current model.provider / model.default config.',
     authType: 'backend_config',
-    setupHint: 'Auto 使用 Hermes 后端当前默认配置。',
+    setupHint: 'Auto uses the Hermes backend\'s current default config.',
     models: [{ value: '', label: 'Hermes backend default', short: 'Default' }],
   },
   {
     value: 'deepseek',
     label: 'DeepSeek',
     short: 'DS',
-    description: 'DeepSeek 官方 API。',
+    description: 'DeepSeek official API.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 DeepSeek API Key，或在后端配置 DEEPSEEK_API_KEY。',
+    setupHint: 'Paste a DeepSeek API Key, or set DEEPSEEK_API_KEY in the backend env.',
     models: [
       { value: 'deepseek-chat', label: 'DeepSeek Chat', short: 'Chat' },
       { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner', short: 'Reasoner' },
-      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash（兼容旧会话）', short: 'V4F' },
-      { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro（兼容旧会话）', short: 'V4P' },
+      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (legacy session)', short: 'V4F' },
+      { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (legacy session)', short: 'V4P' },
     ],
   },
   {
     value: 'anthropic',
     label: 'Anthropic Claude',
     short: 'CLAUDE',
-    description: 'Anthropic Messages API。',
+    description: 'Anthropic Messages API.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 Anthropic API Key。没有 Anthropic Key 时，建议改用 OpenAI Codex OAuth 或 Custom（OpenRouter Base URL）。',
+    setupHint: 'Paste an Anthropic API Key. If you do not have one, use OpenAI Codex OAuth or Custom (e.g. OpenRouter Base URL).',
     models: [
       { value: 'claude-opus-4-7', label: 'Claude Opus 4.7', short: 'Opus 4.7' },
       { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', short: 'Sonnet 4.6' },
@@ -73,10 +142,10 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'gemini',
     label: 'Google Gemini',
     short: 'GEM',
-    description: 'Google AI Studio API key provider。',
+    description: 'Google AI Studio API key provider.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 Google AI Studio API Key，或在后端配置 GOOGLE_API_KEY/GEMINI_API_KEY。',
+    setupHint: 'Paste a Google AI Studio API Key, or set GOOGLE_API_KEY / GEMINI_API_KEY in the backend env.',
     models: [
       { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', short: '3F' },
       { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', short: '3P' },
@@ -87,10 +156,10 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'xai',
     label: 'xAI Grok',
     short: 'xAI',
-    description: 'xAI 官方 API。',
+    description: 'xAI official API.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 xAI API Key，或在后端配置 XAI_API_KEY。',
+    setupHint: 'Paste an xAI API Key, or set XAI_API_KEY in the backend env.',
     models: [
       { value: 'grok-4', label: 'Grok 4', short: 'Grok4' },
       { value: 'grok-code-fast-1', label: 'Grok Code Fast 1', short: 'Code' },
@@ -101,10 +170,10 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'alibaba',
     label: 'Qwen / Alibaba',
     short: 'QWEN',
-    description: 'Alibaba DashScope OpenAI-compatible API。',
+    description: 'Alibaba DashScope OpenAI-compatible API.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 DashScope API Key，或在后端配置 DASHSCOPE_API_KEY。',
+    setupHint: 'Paste a DashScope API Key, or set DASHSCOPE_API_KEY in the backend env.',
     models: [
       { value: 'qwen3.6-plus', label: 'Qwen3.6 Plus', short: '3.6+' },
       { value: 'qwen3.5-plus', label: 'Qwen3.5 Plus', short: '3.5+' },
@@ -115,9 +184,9 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'qwen-oauth',
     label: 'Qwen OAuth',
     short: 'QOAuth',
-    description: 'Qwen CLI / Portal OAuth provider。',
+    description: 'Qwen CLI / Portal OAuth provider.',
     authType: 'oauth',
-    setupHint: '使用 Qwen OAuth。通常需要先在本机完成 qwen auth qwen-oauth。',
+    setupHint: 'Uses Qwen OAuth. Usually requires running `qwen auth qwen-oauth` on this machine first.',
     models: [
       { value: 'qwen3.6-plus', label: 'Qwen3.6 Plus', short: '3.6+' },
       { value: 'qwen3.5-plus', label: 'Qwen3.5 Plus', short: '3.5+' },
@@ -128,10 +197,10 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'kimi-coding',
     label: 'Kimi / Moonshot',
     short: 'KIMI',
-    description: 'Kimi / Moonshot coding provider。',
+    description: 'Kimi / Moonshot coding provider.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 Kimi/Moonshot API Key，或在后端配置 KIMI_API_KEY。',
+    setupHint: 'Paste a Kimi / Moonshot API Key, or set KIMI_API_KEY in the backend env.',
     models: [
       { value: 'kimi-k2.6', label: 'Kimi K2.6', short: 'K2.6' },
       { value: 'kimi-k2-thinking', label: 'Kimi K2 Thinking', short: 'Think' },
@@ -142,10 +211,10 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'zai',
     label: 'Z.ai / GLM',
     short: 'GLM',
-    description: 'Z.ai / Zhipu GLM provider。',
+    description: 'Z.ai / Zhipu GLM provider.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 Z.ai/GLM API Key，或在后端配置 GLM_API_KEY/ZAI_API_KEY。',
+    setupHint: 'Paste a Z.ai / GLM API Key, or set GLM_API_KEY / ZAI_API_KEY in the backend env.',
     models: [
       { value: 'glm-5.1', label: 'GLM 5.1', short: '5.1' },
       { value: 'glm-5', label: 'GLM 5', short: '5' },
@@ -156,10 +225,10 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'minimax',
     label: 'MiniMax',
     short: 'MM',
-    description: 'MiniMax Anthropic-compatible provider。',
+    description: 'MiniMax Anthropic-compatible provider.',
     authType: 'api_key',
     requiredFields: ['apiKey'],
-    setupHint: '粘贴 MiniMax API Key，或选择 MiniMax OAuth 登录。',
+    setupHint: 'Paste a MiniMax API Key, or use MiniMax OAuth to log in.',
     models: [
       { value: 'MiniMax-M2.7', label: 'MiniMax M2.7', short: 'M2.7' },
       { value: 'MiniMax-M2.5', label: 'MiniMax M2.5', short: 'M2.5' },
@@ -170,19 +239,19 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'custom',
     label: 'Custom / Local',
     short: 'CUSTOM',
-    description: 'OpenAI-compatible custom endpoint, local Ollama/vLLM/LM Studio 等。',
+    description: 'OpenAI-compatible custom endpoint — local Ollama / vLLM / LM Studio, etc.',
     authType: 'custom',
     requiredFields: ['baseUrl', 'model'],
-    setupHint: '填写 OpenAI-compatible Base URL 和 Model ID；API Key 可选。',
-    models: [{ value: '', label: '输入自定义 Model ID', short: 'Custom' }],
+    setupHint: 'Fill in an OpenAI-compatible Base URL and Model ID; API Key is optional.',
+    models: [{ value: '', label: 'Custom model ID', short: 'Custom' }],
   },
   {
     value: 'openai-codex',
     label: 'OpenAI Codex OAuth',
     short: 'CODEX',
-    description: 'OpenAI Codex 登录链接 / device-code provider。',
+    description: 'OpenAI Codex device-code OAuth provider.',
     authType: 'oauth',
-    setupHint: '通过 OpenAI Codex OAuth 登录，不需要 API Key。',
+    setupHint: 'Log in via OpenAI Codex OAuth — no API Key needed.',
     models: [
       { value: 'gpt-5.5', label: 'GPT-5.5', short: '5.5' },
       { value: 'gpt-5.4', label: 'GPT-5.4', short: '5.4' },
@@ -198,9 +267,9 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'google-gemini-cli',
     label: 'Gemini OAuth',
     short: 'GEM OAuth',
-    description: 'Google Gemini CLI / Cloud Code OAuth provider。',
+    description: 'Google Gemini CLI / Cloud Code OAuth provider.',
     authType: 'oauth',
-    setupHint: '使用 Google Gemini OAuth；通常需要本机完成 Gemini CLI 登录。',
+    setupHint: 'Uses Google Gemini OAuth — usually requires completing the Gemini CLI login on this machine first.',
     models: [
       { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', short: '3F' },
       { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', short: '3P' },
@@ -210,9 +279,9 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'minimax-oauth',
     label: 'MiniMax OAuth',
     short: 'MM OAuth',
-    description: 'MiniMax OAuth 登录 provider。',
+    description: 'MiniMax OAuth login provider.',
     authType: 'oauth',
-    setupHint: '通过 MiniMax OAuth 登录，不需要 API Key。',
+    setupHint: 'Log in via MiniMax OAuth — no API Key needed.',
     models: [
       { value: 'MiniMax-M2.7', label: 'MiniMax M2.7', short: 'M2.7' },
       { value: 'MiniMax-M2.7-highspeed', label: 'MiniMax M2.7 Highspeed', short: 'Fast' },
@@ -222,22 +291,21 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     value: 'nous',
     label: 'Nous Portal OAuth',
     short: 'NOUS',
-    description: 'Nous Portal device-code OAuth provider。',
+    description: 'Nous Portal device-code OAuth provider.',
     authType: 'oauth',
-    setupHint: '通过 Nous Portal 登录，不需要 API Key。',
+    setupHint: 'Log in via Nous Portal — no API Key needed.',
     models: [
       { value: '', label: 'Nous default model', short: 'Default' },
     ],
   },
 ];
-const MODE_OPTIONS: { value: ExecMode; label: string; short: string; icon: string }[] = [
-  { value: 'auto',     label: '自动执行（Accept edits）', short: '自动',  icon: '🤖' },
-  { value: 'plan',     label: 'Plan 模式（只读调研）',    short: 'Plan',  icon: '📋' },
+type ModeKey = 'mode_auto' | 'mode_plan';
+type ModeShortKey = 'mode_auto_short' | 'mode_plan_short';
+const MODE_OPTIONS: { value: ExecMode; labelKey: ModeKey; shortKey: ModeShortKey; icon: string }[] = [
+  { value: 'auto', labelKey: 'mode_auto', shortKey: 'mode_auto_short', icon: '🤖' },
+  { value: 'plan', labelKey: 'mode_plan', shortKey: 'mode_plan_short', icon: '📋' },
 ];
-const PLACEHOLDER_BY_MODE: Record<string, string> = {
-  auto: 'Ask Hermes...  (⌘↩)',
-  plan: 'Plan 模式 · 只调研不操作  (⌘↩)',
-};
+// placeholder text is built per render from i18n inside App, no module-level dict needed
 const DEFAULT_SETTINGS: UserSettings = { provider: 'auto', model: '', mode: 'auto' };
 const CREDENTIAL_STORAGE_KEY = 'hermes_provider_credentials_v1';
 const settingsBySession: Record<string, UserSettings> = {};
@@ -393,6 +461,47 @@ function shortArgs(args: unknown): string {
   }
 }
 
+const MAX_HISTORY_STRING_CHARS = 4_000;
+const MAX_HISTORY_RESULT_JSON_CHARS = 50_000;
+const MAX_HISTORY_RESULT_PREVIEW_CHARS = 12_000;
+
+function compactForHistory(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') {
+    return value.length > MAX_HISTORY_STRING_CHARS
+      ? `${value.slice(0, MAX_HISTORY_STRING_CHARS)}\n... [truncated ${value.length - MAX_HISTORY_STRING_CHARS} chars]`
+      : value;
+  }
+  if (!value || typeof value !== 'object') return value;
+  if (depth > 4) return '[object truncated]';
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => compactForHistory(item, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if ((key === 'data' || key === 'content') && typeof item === 'string' && item.length > 20_000) {
+      out[key] = `[omitted ${item.length} chars]`;
+      out[`${key}_omitted_chars`] = item.length;
+    } else {
+      out[key] = compactForHistory(item, depth + 1);
+    }
+  }
+  return out;
+}
+
+function compactToolResultForHistory(tool: string, data: unknown): unknown {
+  const compacted = compactForHistory(data);
+  try {
+    const json = JSON.stringify(compacted);
+    if (json.length <= MAX_HISTORY_RESULT_JSON_CHARS) return compacted;
+    return {
+      truncated: true,
+      tool,
+      original_json_chars: json.length,
+      preview: json.slice(0, MAX_HISTORY_RESULT_PREVIEW_CHARS),
+    };
+  } catch {
+    return compacted;
+  }
+}
+
 function BgLayers() {
   return (
     <>
@@ -431,10 +540,11 @@ function Avatar({ small = false, showId = false }: { small?: boolean; showId?: b
 
 function CopyBtn({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const { t } = useT();
   return (
     <button
       className={`copy-btn ${copied ? 'copied' : ''}`}
-      title={copied ? '已复制' : '复制'}
+      title={copied ? t('copy_done') : t('copy_do')}
       onClick={(e) => {
         e.stopPropagation();
         navigator.clipboard.writeText(text).then(() => {
@@ -450,8 +560,134 @@ function CopyBtn({ text }: { text: string }) {
 
 type Theme = 'dystopia' | 'synthwave';
 const THEME_STORAGE_KEY = 'hermes_theme';
+const ONBOARDING_CACHE_KEY = 'hermes_onboarding_v1';
+
+type CheckState = 'checking' | 'ok' | 'fail';
+
+function localProviderConfigReady(provider: ProviderOption, settings: UserSettings, credential?: ProviderCredential): boolean {
+  if (provider.authType === 'custom') {
+    return !!credential?.baseUrl?.trim() && !!settings.model?.trim();
+  }
+  if (provider.authType === 'api_key') {
+    return !!credential?.apiKey?.trim() || !!credential?.baseUrl?.trim();
+  }
+  return false;
+}
+
+function onboardingProviderState(args: {
+  backend: CheckState;
+  connected: boolean;
+  provider: ProviderOption;
+  providerStatus: ProviderStatus | null;
+  hasLocalConfig: boolean;
+  checking: boolean;
+}): CheckState {
+  const { backend, connected, provider, providerStatus, hasLocalConfig, checking } = args;
+  if (provider.value === 'auto') {
+    if (connected) return 'ok';
+    return backend === 'checking' ? 'checking' : 'fail';
+  }
+
+  if (checking) return 'checking';
+  if (providerStatus) return providerStatus.ok ? 'ok' : 'fail';
+  if (provider.authType === 'custom' && hasLocalConfig) return connected ? 'checking' : 'ok';
+  if (hasLocalConfig) return connected ? 'checking' : 'fail';
+  return backend === 'checking' ? 'checking' : 'fail';
+}
+
+interface OnboardingBarProps {
+  backend: CheckState;
+  nativeHost: CheckState;
+  provider: CheckState;
+  extensionId: string;
+  repoRoot: string | null;
+  hostError?: string;
+  expanded: boolean;
+  onToggle: () => void;
+  onRecheck: () => void;
+  onOpenSettings: () => void;
+}
+
+function buildOneliner(repoRoot: string | null, cmd: string, placeholder: string): { line: string; needsManualCd: boolean } {
+  if (repoRoot) {
+    const quoted = `'${repoRoot.replace(/'/g, `'\\''`)}'`;
+    return { line: `cd ${quoted} && ${cmd}`, needsManualCd: false };
+  }
+  return { line: `cd ${placeholder} && ${cmd}`, needsManualCd: true };
+}
+
+function OnboardingStatusBar(p: OnboardingBarProps) {
+  const { backend, nativeHost, provider, extensionId, repoRoot, hostError, expanded, onToggle, onRecheck, onOpenSettings } = p;
+  const { t } = useT();
+  const placeholder = t('ob_repo_placeholder');
+  const backendLine = buildOneliner(repoRoot, 'npm run backend:ensure', placeholder);
+  const installRaw = extensionId
+    ? `npm run native-host:install -- ${extensionId}`
+    : 'npm run native-host:install -- <extension-id>';
+  const installLine = buildOneliner(repoRoot, installRaw, placeholder);
+  return (
+    <div className={`onboarding-bar ${expanded ? 'expanded' : 'collapsed'}`}>
+      <button type="button" className="ob-summary" onClick={onToggle} title={expanded ? t('ob_toggle_collapse') : t('ob_toggle_expand')}>
+        <span className={`ob-dot ob-${backend}`} /><span className="ob-name">{t('ob_summary_backend')}</span>
+        <span className={`ob-dot ob-${nativeHost}`} /><span className="ob-name">{t('ob_summary_host')}</span>
+        <span className={`ob-dot ob-${provider}`} /><span className="ob-name">{t('ob_summary_provider')}</span>
+        <span className="ob-spacer" />
+        <span className="ob-toggle">{expanded ? '▴' : '▾'}</span>
+      </button>
+      {expanded && (
+        <div className="ob-cards">
+          {backend !== 'ok' && (
+            <div className="ob-card">
+              <div className="ob-card-title">{backend === 'checking' ? t('ob_backend_title_checking') : t('ob_backend_title_fail')}</div>
+              <div className="ob-card-body">
+                <div>{t('ob_paste_to_terminal')}</div>
+                <div className="ob-cmd-row"><code>{backendLine.line}</code><CopyBtn text={backendLine.line} /></div>
+                {backendLine.needsManualCd && (
+                  <div className="ob-hint">{t('ob_replace_placeholder_backend')}</div>
+                )}
+                <div className="ob-hint">{t('ob_hint_install_agent')}</div>
+              </div>
+              <button className="ob-recheck" onClick={onRecheck} disabled={backend === 'checking'}>{t('ob_recheck')}</button>
+            </div>
+          )}
+          {nativeHost !== 'ok' && (
+            <div className="ob-card">
+              <div className="ob-card-title">{nativeHost === 'checking' ? t('ob_host_title_checking') : t('ob_host_title_fail')}</div>
+              <div className="ob-card-body">
+                <div>{t('ob_host_body')}</div>
+                <div className="ob-id-row">
+                  <span className="ob-id-label">{t('ob_host_ext_id')}</span>
+                  <code className="ob-id">{extensionId || t('ob_host_ext_id_loading')}</code>
+                  {extensionId && <CopyBtn text={extensionId} />}
+                </div>
+                <div>{t('ob_paste_to_terminal')}</div>
+                <div className="ob-cmd-row"><code>{installLine.line}</code>{extensionId && <CopyBtn text={installLine.line} />}</div>
+                {installLine.needsManualCd && (
+                  <div className="ob-hint">{t('ob_replace_placeholder_install')}</div>
+                )}
+                <div className="ob-hint">{t('ob_host_after_install')}</div>
+                {hostError && <div className="ob-error">{t('ob_host_error_prefix')}{hostError}</div>}
+              </div>
+              <button className="ob-recheck" onClick={onRecheck} disabled={nativeHost === 'checking'}>{t('ob_recheck')}</button>
+            </div>
+          )}
+          {provider !== 'ok' && (
+            <div className="ob-card">
+              <div className="ob-card-title">{provider === 'checking' ? t('ob_provider_title_checking') : t('ob_provider_title_fail')}</div>
+              <div className="ob-card-body">
+                <div>{provider === 'checking' ? t('ob_provider_body_checking') : t('ob_provider_body_fail')}</div>
+              </div>
+              <button className="ob-recheck" onClick={onOpenSettings}>{t('ob_open_settings')}</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
+  const { t, lang, toggleLang } = useT();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [draft, setDraft] = useState('');
   const [running, setRunning] = useState(false);
@@ -482,6 +718,7 @@ export default function App() {
   const settingsRef = useRef<UserSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
+  const [providerStatusCheckedKey, setProviderStatusCheckedKey] = useState('');
   const [oauthSession, setOauthSession] = useState<{ provider: string; loginUrl?: string; userCode?: string; sessionId?: string; pollInterval?: number } | null>(null);
   const [providerBusy, setProviderBusy] = useState(false);
   const [startupChecking, setStartupChecking] = useState(false);
@@ -491,6 +728,12 @@ export default function App() {
   const [credentials, setCredentials] = useState<ProviderCredentialStore>({});
   const credentialsRef = useRef<ProviderCredentialStore>({});
   const [credentialDraft, setCredentialDraft] = useState<ProviderCredential>({});
+  const [obBackend, setObBackend] = useState<CheckState>('checking');
+  const [obNativeHost, setObNativeHost] = useState<CheckState>('checking');
+  const [obExtId, setObExtId] = useState('');
+  const [obRepoRoot, setObRepoRoot] = useState<string | null>(null);
+  const [obHostError, setObHostError] = useState<string | undefined>(undefined);
+  const [obExpanded, setObExpanded] = useState(true);
   const composingRef = useRef(false);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { credentialsRef.current = credentials; }, [credentials]);
@@ -622,21 +865,36 @@ export default function App() {
     };
   }
 
+  function checkedKeyForRequest(request: ProviderRequest): string {
+    return providerStatusKey(request.provider, request.model, request.credentialOverride);
+  }
+
+  function currentSavedProviderStatusKey(): string {
+    const provider = settings.provider || 'auto';
+    return providerStatusKey(provider, settings.model, credentials[provider]);
+  }
+
   async function refreshProviderStatus(options: { silent?: boolean } = {}) {
+    const request = buildProviderRequest();
+    const checkedKey = checkedKeyForRequest(request);
     if (options.silent) setStartupChecking(true);
     else setProviderBusy(true);
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'SP_PROVIDER_STATUS',
-        request: buildProviderRequest(),
+        request,
       } satisfies SidepanelMessage);
-      if (resp?.status) setProviderStatus(resp.status);
+      if (resp?.status) {
+        setProviderStatus(resp.status);
+        setProviderStatusCheckedKey(checkedKey);
+      }
     } catch (e) {
       setProviderStatus({
         provider: settings.provider || 'auto',
         ok: false, connected: false,
-        message: `状态查询失败: ${e instanceof Error ? e.message : String(e)}`,
+        message: `${t('banner_status_query_failed')}: ${e instanceof Error ? e.message : String(e)}`,
       });
+      setProviderStatusCheckedKey(checkedKey);
     } finally {
       if (options.silent) setStartupChecking(false);
       else setProviderBusy(false);
@@ -644,16 +902,21 @@ export default function App() {
   }
 
   async function validateProvider() {
+    const request = buildProviderRequest();
+    const checkedKey = checkedKeyForRequest(request);
     setProviderBusy(true);
     setProviderBanner(null);
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'SP_PROVIDER_VALIDATE',
-        request: buildProviderRequest(),
+        request,
       } satisfies SidepanelMessage);
-      if (resp?.status) setProviderStatus(resp.status);
+      if (resp?.status) {
+        setProviderStatus(resp.status);
+        setProviderStatusCheckedKey(checkedKey);
+      }
     } catch (e) {
-      setProviderBanner(`验证失败: ${e instanceof Error ? e.message : String(e)}`);
+      setProviderBanner(`${t('banner_validate_failed')}: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setProviderBusy(false);
     }
@@ -681,13 +944,14 @@ export default function App() {
         }
         if (status.ok) {
           setProviderStatus(status);
+          setProviderStatusCheckedKey(currentSavedProviderStatusKey());
           setOauthSession(null);
-          setProviderBanner('登录成功。');
+          setProviderBanner(t('banner_login_success'));
           stopOauthPoll();
           return;
         }
         if (status.message && /expired|denied|error/i.test(status.message)) {
-          setProviderBanner(`登录未完成: ${status.message}`);
+          setProviderBanner(`${t('banner_login_incomplete')}: ${status.message}`);
           setOauthSession(null);
           stopOauthPoll();
           return;
@@ -700,13 +964,15 @@ export default function App() {
   }
 
   async function startProviderAuth() {
+    const request = buildProviderRequest();
+    const checkedKey = checkedKeyForRequest(request);
     setProviderBusy(true);
     setProviderBanner(null);
     try {
       const provider = settings.provider || 'auto';
       const resp = await chrome.runtime.sendMessage({
         type: 'SP_PROVIDER_AUTH_START',
-        request: buildProviderRequest(),
+        request,
       } satisfies SidepanelMessage);
       const status = resp?.status as ProviderStatus | undefined;
       if (status?.ok && status.sessionId) {
@@ -718,32 +984,37 @@ export default function App() {
           pollInterval: status.pollInterval || 5,
         });
         setProviderStatus(status);
+        setProviderStatusCheckedKey(checkedKey);
         if (status.loginUrl) {
           try { window.open(status.loginUrl, '_blank', 'noopener'); } catch {}
         }
         schedulePoll(provider, status.sessionId, status.pollInterval || 5);
       } else {
-        setProviderBanner(status?.message || '启动登录失败。');
+        setProviderBanner(status?.message || t('banner_login_failed_hint'));
       }
     } catch (e) {
-      setProviderBanner(`启动登录失败: ${e instanceof Error ? e.message : String(e)}`);
+      setProviderBanner(`${t('banner_login_failed')}: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setProviderBusy(false);
     }
   }
 
   async function logoutProvider() {
+    const checkedKey = currentSavedProviderStatusKey();
     setProviderBusy(true);
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'SP_PROVIDER_LOGOUT',
         request: buildProviderRequest(),
       } satisfies SidepanelMessage);
-      if (resp?.status) setProviderStatus(resp.status);
+      if (resp?.status) {
+        setProviderStatus(resp.status);
+        setProviderStatusCheckedKey(checkedKey);
+      }
       setOauthSession(null);
       stopOauthPoll();
     } catch (e) {
-      setProviderBanner(`登出失败: ${e instanceof Error ? e.message : String(e)}`);
+      setProviderBanner(`${t('banner_logout_failed')}: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setProviderBusy(false);
     }
@@ -765,7 +1036,7 @@ export default function App() {
     }
     const provider = settings.provider || 'auto';
     const credential = credentials[provider];
-    const key = `${provider}:${settings.model || ''}:${credential?.apiKey ? 'key' : ''}:${credential?.baseUrl || ''}`;
+    const key = providerStatusKey(provider, settings.model, credential);
     if (startupCheckKeyRef.current === key) return;
     startupCheckKeyRef.current = key;
     refreshProviderStatus({ silent: true }).catch(() => {});
@@ -844,6 +1115,88 @@ export default function App() {
     };
   }, []);
 
+  // 缓存恢复：首次渲染不闪烁
+  useEffect(() => {
+    chrome.storage.local.get(ONBOARDING_CACHE_KEY).then((r) => {
+      const cached = r[ONBOARDING_CACHE_KEY] as { backend?: CheckState; nativeHost?: CheckState; extId?: string; repoRoot?: string | null; expanded?: boolean } | undefined;
+      if (cached) {
+        if (cached.backend) setObBackend(cached.backend);
+        if (cached.nativeHost) setObNativeHost(cached.nativeHost);
+        if (cached.extId) setObExtId(cached.extId);
+        if (cached.repoRoot !== undefined) setObRepoRoot(cached.repoRoot);
+        if (typeof cached.expanded === 'boolean') setObExpanded(cached.expanded);
+      }
+    }).catch(() => {});
+  }, []);
+
+  function recheckOnboarding() {
+    setObBackend('checking');
+    setObNativeHost('checking');
+    chrome.runtime.sendMessage({ type: 'SP_ONBOARDING_CHECK_BACKEND' } satisfies SidepanelMessage)
+      .then((r: { status?: 'healthy' | 'offline' } | undefined) => {
+        const healthy = r?.status === 'healthy';
+        setObBackend(healthy ? 'ok' : 'fail');
+        if (healthy) refreshProviderStatus({ silent: true }).catch(() => {});
+      })
+      .catch(() => setObBackend('fail'));
+    chrome.runtime.sendMessage({ type: 'SP_ONBOARDING_CHECK_NATIVE_HOST' } satisfies SidepanelMessage)
+      .then((r: { installed?: boolean; error?: string; repoRoot?: string | null } | undefined) => {
+        if (r?.installed) {
+          setObNativeHost('ok');
+          setObHostError(undefined);
+          if (r.repoRoot !== undefined) setObRepoRoot(r.repoRoot);
+        } else {
+          setObNativeHost('fail');
+          setObHostError(r?.error);
+        }
+      })
+      .catch((e: unknown) => {
+        setObNativeHost('fail');
+        setObHostError(e instanceof Error ? e.message : String(e));
+      });
+    if (!obExtId) {
+      chrome.runtime.sendMessage({ type: 'SP_ONBOARDING_GET_EXTENSION_ID' } satisfies SidepanelMessage)
+        .then((r: { id?: string } | undefined) => {
+          if (r?.id) setObExtId(r.id);
+        })
+        .catch(() => {});
+    }
+  }
+
+  // 挂载时跑一次
+  useEffect(() => {
+    recheckOnboarding();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Provider 状态来自实际后端检查；本地凭据只作为“可检查”的信号，避免 OAuth/Custom 被误判。
+  const onboardingProvider = providerByValue(settings.provider || 'auto');
+  const onboardingProviderKey = providerStatusKey(onboardingProvider.value, settings.model, credentials[onboardingProvider.value]);
+  const onboardingProviderStatus =
+    providerStatus?.provider === onboardingProvider.value && providerStatusCheckedKey === onboardingProviderKey ? providerStatus : null;
+  const onboardingLocalConfigReady = localProviderConfigReady(onboardingProvider, settings, credentials[onboardingProvider.value]);
+  const obProvider: CheckState = (() => {
+    return onboardingProviderState({
+      backend: obBackend,
+      connected,
+      provider: onboardingProvider,
+      providerStatus: onboardingProviderStatus,
+      hasLocalConfig: onboardingLocalConfigReady,
+      checking: startupChecking || providerBusy,
+    });
+  })();
+
+  // 全绿自动折叠；任一 fail 自动展开；持久化状态
+  useEffect(() => {
+    const allGreen = obBackend === 'ok' && obNativeHost === 'ok' && obProvider === 'ok';
+    const anyFail = obBackend === 'fail' || obNativeHost === 'fail' || obProvider === 'fail';
+    if (allGreen && obExpanded) setObExpanded(false);
+    else if (anyFail && !obExpanded) setObExpanded(true);
+    chrome.storage.local.set({
+      [ONBOARDING_CACHE_KEY]: { backend: obBackend, nativeHost: obNativeHost, extId: obExtId, repoRoot: obRepoRoot, expanded: obExpanded },
+    }).catch(() => {});
+  }, [obBackend, obNativeHost, obProvider, obExpanded, obExtId, obRepoRoot]);
+
   useEffect(() => {
     const onMsg = (msg: SwToSidepanelMessage) => {
       const sid = (msg as any).session_id as string | undefined;
@@ -867,7 +1220,12 @@ export default function App() {
         for (let i = next.length - 1; i >= 0; i--) {
           const e = next[i];
           if (e.kind === 'tool' && e.status === 'pending') {
-            next[i] = { ...e, status: msg.ok ? 'ok' : 'error', result: msg.data, error: msg.error };
+            next[i] = {
+              ...e,
+              status: msg.ok ? 'ok' : 'error',
+              result: msg.ok ? compactToolResultForHistory(e.tool, msg.data) : msg.data,
+              error: msg.error,
+            };
             break;
           }
         }
@@ -922,23 +1280,30 @@ export default function App() {
     if (provider !== 'auto' && provider !== 'custom') {
       const cred = credentials[provider];
       const hasLocalKey = !!(cred?.apiKey || cred?.baseUrl);
-      const knownConnected = providerStatus && providerStatus.provider === provider && providerStatus.ok;
+      const submitStatusKey = providerStatusKey(provider, settings.model, cred);
+      const knownConnected =
+        providerStatus && providerStatus.provider === provider && providerStatus.ok && providerStatusCheckedKey === submitStatusKey;
       if (!hasLocalKey && !knownConnected) {
         // 主动查一次，避免冷启动空值
         try {
+          const request = { provider, model: settings.model };
           const resp = await chrome.runtime.sendMessage({
             type: 'SP_PROVIDER_STATUS',
-            request: { provider, model: settings.model },
+            request,
           } satisfies SidepanelMessage);
           const s = resp?.status as ProviderStatus | undefined;
-          if (s) setProviderStatus(s);
+          if (s) {
+            setProviderStatus(s);
+            setProviderStatusCheckedKey(providerStatusKey(request.provider, request.model));
+          }
           if (!s?.ok) {
-            setProviderBanner(`${providerByValue(provider).label} 未配置：${s?.message || s?.hint || '请打开右上角 ⚙ 配置 API Key 或登录。'}`);
+            const baseHint = s?.message || s?.hint || t('banner_provider_not_set', { provider: providerByValue(provider).label });
+            setProviderBanner(baseHint);
             setSettingsOpen(true);
             return;
           }
         } catch (e) {
-          setProviderBanner(`无法查询 provider 状态: ${e instanceof Error ? e.message : String(e)}`);
+          setProviderBanner(`${t('banner_provider_status_failed')}: ${e instanceof Error ? e.message : String(e)}`);
           setSettingsOpen(true);
           return;
         }
@@ -965,7 +1330,7 @@ export default function App() {
       const resp = await chrome.runtime.sendMessage({ type: 'SP_SUBMIT', text, settings: submittedSettings } satisfies SidepanelMessage);
       if (resp && resp.ok === false) {
         setEntries((prev) => {
-          const next = [...prev, { kind: 'text' as const, text: `❌ ${resp.error || '发送失败'}` }];
+          const next = [...prev, { kind: 'text' as const, text: `❌ ${resp.error || t('banner_send_failed')}` }];
           if (currentSessionId) {
             entriesBySession[currentSessionId] = next;
             persistSession(currentSessionId, next, { groupId: currentGroupIdRef.current, titleFallback: currentTabTitle }).catch(() => {});
@@ -988,7 +1353,7 @@ export default function App() {
         refreshHistory(newGroupId).catch(() => {});
       }
     } catch (e) {
-      setEntries((prev) => [...prev, { kind: 'text', text: `❌ 发送失败: ${e instanceof Error ? e.message : String(e)}` }]);
+      setEntries((prev) => [...prev, { kind: 'text', text: `❌ ${t('banner_send_failed')}: ${e instanceof Error ? e.message : String(e)}` }]);
       setRunning(false);
     }
   }
@@ -1000,7 +1365,7 @@ export default function App() {
   }
 
   async function newChat() {
-    if (running && !confirm('当前任务仍在运行，要切到新对话吗？')) return;
+    if (running && !confirm(t('banner_running_switch_confirm'))) return;
     if (currentSessionId) {
       await persistSession(currentSessionId, entries, { groupId: currentGroupIdRef.current, settings, titleFallback: currentTabTitle });
     }
@@ -1045,7 +1410,7 @@ export default function App() {
     downloadText(`hermes-${stamp}.md`, buildMarkdownExport(entries));
   }
 
-  const placeholder = PLACEHOLDER_BY_MODE[settings.mode || 'auto'] || PLACEHOLDER_BY_MODE.auto;
+  const placeholder = `${t('input_placeholder')}  (⌘↩)`;
   const currentMode = MODE_OPTIONS.find(o => o.value === (settings.mode || 'auto')) || MODE_OPTIONS[0];
   const currentProvider = providerByValue(settings.provider || 'auto');
   const currentModel = currentProvider.models.find(o => o.value === (settings.model || '')) || {
@@ -1057,25 +1422,33 @@ export default function App() {
     ? (settings.model || '')
     : '__custom__';
   const providerHasCredential = !!credentials[currentProvider.value]?.apiKey || !!credentials[currentProvider.value]?.baseUrl;
-  const statusForCurrentProvider = providerStatus?.provider === currentProvider.value ? providerStatus : null;
+  const currentStatusCredential = settingsOpen
+    ? {
+        apiKey: credentialDraft.apiKey?.trim() || credentials[currentProvider.value]?.apiKey,
+        baseUrl: credentialDraft.baseUrl?.trim() || credentials[currentProvider.value]?.baseUrl,
+      }
+    : credentials[currentProvider.value];
+  const currentProviderStatusKey = providerStatusKey(currentProvider.value, settings.model, currentStatusCredential);
+  const statusForCurrentProvider =
+    providerStatus?.provider === currentProvider.value && providerStatusCheckedKey === currentProviderStatusKey ? providerStatus : null;
   const setupNotice = !connected
     ? {
         level: 'error' as const,
-        title: 'Hermes 后端未连接',
-        body: '在项目目录运行 npm run backend:ensure，脚本会检测并启动本地 Hermes gateway。',
+        title: t('banner_backend_offline'),
+        body: t('banner_backend_offline_hint'),
         command: 'npm run backend:ensure',
       }
     : startupChecking
       ? {
           level: 'checking' as const,
-          title: '正在检测模型配置',
-          body: `正在检查 ${currentProvider.label} 是否可用。`,
+          title: t('banner_provider_checking'),
+          body: t('banner_provider_checking_hint', { provider: currentProvider.label }),
           command: '',
         }
       : statusForCurrentProvider && !statusForCurrentProvider.ok
         ? {
             level: 'warn' as const,
-            title: `${currentProvider.label} 未就绪`,
+            title: `${currentProvider.label} — ${t('banner_provider_not_ready')}`,
             body: statusForCurrentProvider.message || statusForCurrentProvider.hint || currentProvider.setupHint,
             command: currentProvider.value === 'auto' ? 'npm run backend:ensure' : '',
           }
@@ -1094,6 +1467,18 @@ export default function App() {
       <div className="panel">
         <BgLayers />
         <div className="content">
+          <OnboardingStatusBar
+            backend={obBackend}
+            nativeHost={obNativeHost}
+            provider={obProvider}
+            extensionId={obExtId}
+            repoRoot={obRepoRoot}
+            hostError={obHostError}
+            expanded={obExpanded}
+            onToggle={() => setObExpanded((v) => !v)}
+            onRecheck={recheckOnboarding}
+            onOpenSettings={() => { setSettingsOpen(true); setObExpanded(false); }}
+          />
           <div className="header">
             <div className="logo">
               <div title={currentSessionId || ''}><Avatar /></div>
@@ -1109,39 +1494,44 @@ export default function App() {
                   <span className="sep">/</span>
                   <span className="model">{currentModel.short}</span>
                   <span className="sep">·</span>
-                  <span className={`status ${connected ? '' : 'offline'}`}><span className="dot" />{connected ? 'ONLINE' : 'OFFLINE'}</span>
+                  <span className={`status ${connected ? '' : 'offline'}`}><span className="dot" />{connected ? t('status_online') : t('status_offline')}</span>
                 </div>
               </div>
             </div>
             <div className="header-actions">
-              <button className={`icon-btn ${settingsOpen ? 'active' : ''}`} title="模型与密钥设置" onClick={() => setSettingsOpen((v) => !v)}>⚙</button>
+              <button className={`icon-btn ${settingsOpen ? 'active' : ''}`} title={t('header_settings')} onClick={() => setSettingsOpen((v) => !v)}>⚙</button>
               <button
                 className="icon-btn theme-toggle"
-                title={theme === 'dystopia' ? '切换到 Synthwave 80s' : '切换到 CP2077 主题'}
+                title={theme === 'dystopia' ? t('header_theme_to_synthwave') : t('header_theme_to_dystopia')}
                 onClick={toggleTheme}
               >{theme === 'dystopia' ? '◐' : '◑'}</button>
-              <button className={`icon-btn ${historyOpen ? 'active' : ''}`} title="历史对话" onClick={() => { setHistoryOpen((v) => !v); refreshHistory().catch(() => {}); }}>◷</button>
-              <button className="icon-btn" title="导出对话为 Markdown" onClick={exportConversation} disabled={entries.length === 0}>⤓</button>
-              <button className="icon-btn" title="新对话" onClick={newChat}>+</button>
+              <button
+                className="icon-btn lang-toggle"
+                title={t('header_lang_toggle')}
+                onClick={toggleLang}
+              >{lang === 'zh' ? 'EN' : '中'}</button>
+              <button className={`icon-btn ${historyOpen ? 'active' : ''}`} title={t('header_history')} onClick={() => { setHistoryOpen((v) => !v); refreshHistory().catch(() => {}); }}>◷</button>
+              <button className="icon-btn" title={t('header_export_md')} onClick={exportConversation} disabled={entries.length === 0}>⤓</button>
+              <button className="icon-btn" title={t('header_new_chat')} onClick={newChat}>+</button>
             </div>
           </div>
           <div className="system-bar" aria-hidden="true">
             <div className="hazard-mini" />
-            <span>SYSTEM // OPERATIONAL · {toolCount} TOOLS</span>
+            <span>{t('system_op', { n: toolCount })}</span>
           </div>
           <div className="tab-meta" title={currentTabTitle || ''}>
             <span className="tab-fav" />
             <span className="tab-url">{currentTabTitle || '—'}</span>
-            <span className="tab-id">// TAB</span>
+            <span className="tab-id">{t('tab_tag')}</span>
           </div>
       {historyOpen && (
         <div className="history-panel">
           <div className="history-head">
-            <span>历史对话</span>
+            <span>{t('history_title')}</span>
             <span>{historyItems.length}</span>
           </div>
           <div className="history-list">
-            {historyItems.length === 0 && <div className="history-empty">这个组还没有历史</div>}
+            {historyItems.length === 0 && <div className="history-empty">{t('history_empty')}</div>}
             {historyItems.map((item) => (
               <button
                 key={item.id}
@@ -1150,7 +1540,7 @@ export default function App() {
                 title={item.title}
               >
                 <span className="history-title">{item.title}</span>
-                <span className="history-meta">{new Date(item.updatedAt).toLocaleString()} · {item.count} 条</span>
+                <span className="history-meta">{new Date(item.updatedAt).toLocaleString()} · {item.count}{t('history_count_suffix') ? ' ' + t('history_count_suffix') : ''}</span>
               </button>
             ))}
           </div>
@@ -1159,80 +1549,80 @@ export default function App() {
       {settingsOpen && (
         <div className="settings-panel">
           <div className="settings-head">
-            <span>模型设置</span>
+            <span>{t('settings_title')}</span>
             <span className="settings-head-right">
               <span>{currentProvider.label}</span>
-              <button className="settings-close" title="关闭设置" onClick={() => setSettingsOpen(false)}>×</button>
+              <button className="settings-close" title={t('settings_close')} onClick={() => setSettingsOpen(false)}>×</button>
             </span>
           </div>
           <div className="settings-body">
             <label className="settings-field">
-              <span>Model ID</span>
+              <span>{t('settings_model_id')}</span>
               <input
                 value={settings.model || ''}
-                placeholder={currentProvider.value === 'auto' ? 'Hermes backend default' : currentProvider.models[0]?.value || 'model-id'}
+                placeholder={currentProvider.value === 'auto' ? t('settings_model_id_placeholder_auto') : currentProvider.models[0]?.value || 'model-id'}
                 onChange={(e) => updateSettings({ model: e.target.value })}
               />
             </label>
             <div className="settings-note">
-              默认推荐把密钥放在 Hermes 后端；这里填写的密钥只保存在 Chrome 本地，并且只发送给 127.0.0.1 后端。
+              {t('settings_local_note')}
             </div>
             <label className="settings-field">
-              <span>API Key</span>
+              <span>{t('settings_api_key')}</span>
               <input
                 type="password"
                 value={credentialDraft.apiKey || ''}
                 disabled={currentProvider.value === 'auto'}
-                placeholder={currentProvider.value === 'auto' ? 'Auto 使用后端配置' : '可选：覆盖后端 API Key'}
+                placeholder={currentProvider.value === 'auto' ? t('settings_apikey_placeholder_auto') : t('settings_apikey_placeholder_default')}
                 onChange={(e) => setCredentialDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
               />
             </label>
             <label className="settings-field">
-              <span>Base URL</span>
+              <span>{t('settings_base_url')}</span>
               <input
                 value={credentialDraft.baseUrl || ''}
                 disabled={currentProvider.value === 'auto'}
-                placeholder={currentProvider.value === 'auto' ? 'Auto 使用后端配置' : '可选：自定义 OpenAI-compatible endpoint'}
+                placeholder={currentProvider.value === 'auto' ? t('settings_baseurl_placeholder_auto') : t('settings_baseurl_placeholder_default')}
                 onChange={(e) => setCredentialDraft((prev) => ({ ...prev, baseUrl: e.target.value }))}
               />
             </label>
             <div className="settings-actions">
               <span className={`settings-state ${providerHasCredential ? 'on' : ''}`}>
-                {currentProvider.value === 'auto' ? '后端默认' : providerHasCredential ? '已保存本地覆盖' : '使用后端凭据'}
+                {currentProvider.value === 'auto' ? t('settings_status_auto') : providerHasCredential ? t('settings_status_local_override') : t('settings_status_backend_cred')}
               </span>
-              <button onClick={clearCredentialDraft} disabled={currentProvider.value === 'auto' || !providerHasCredential}>清除</button>
-              <button onClick={saveCredentialDraft} disabled={currentProvider.value === 'auto'}>保存</button>
+              <button onClick={clearCredentialDraft} disabled={currentProvider.value === 'auto' || !providerHasCredential}>{t('settings_clear')}</button>
+              <button onClick={saveCredentialDraft} disabled={currentProvider.value === 'auto'}>{t('settings_save')}</button>
             </div>
 
-            {/* Provider 服务端连接状态 + 操作按钮 */}
+            {/* Provider service status + actions */}
             {currentProvider.value !== 'auto' && (
               <div className="provider-status">
                 <div className="provider-status-row">
-                  <span className={`provider-dot ${providerStatus?.ok ? 'on' : 'off'}`} />
+                  <span className={`provider-dot ${statusForCurrentProvider?.ok ? 'on' : 'off'}`} />
                   <span className="provider-status-msg">
-                    {providerBusy ? '查询中…' : (providerStatus?.message || '未查询，点测试连接或登录。')}
+                    {providerBusy ? t('settings_querying') : (statusForCurrentProvider?.message || t('settings_no_status'))}
                   </span>
-                  <button onClick={() => refreshProviderStatus()} disabled={providerBusy}>刷新</button>
+                  <button onClick={() => refreshProviderStatus()} disabled={providerBusy}>{t('settings_refresh')}</button>
                 </div>
                 <div className="provider-actions">
                   {currentProvider.authType === 'api_key' && (
-                    <button onClick={validateProvider} disabled={providerBusy}>测试连接</button>
+                    <button onClick={validateProvider} disabled={providerBusy}>{t('settings_test_conn')}</button>
                   )}
                   {currentProvider.authType === 'oauth' && !oauthSession && (
                     <button onClick={startProviderAuth} disabled={providerBusy}>
-                      登录 {currentProvider.label}
+                      {t('settings_login_with', { provider: currentProvider.label })}
                     </button>
                   )}
-                  {providerStatus?.ok && currentProvider.authType !== 'backend_config' && (
-                    <button onClick={logoutProvider} disabled={providerBusy}>登出</button>
+                  {statusForCurrentProvider?.ok && currentProvider.authType !== 'backend_config' && (
+                    <button onClick={logoutProvider} disabled={providerBusy}>{t('settings_logout')}</button>
                   )}
                 </div>
                 {oauthSession && (
                   <div className="oauth-card">
-                    <div className="oauth-title">完成登录</div>
+                    <div className="oauth-title">{t('settings_finish_login')}</div>
                     {oauthSession.userCode && (
                       <div className="oauth-code">
-                        <span className="oauth-code-label">设备码</span>
+                        <span className="oauth-code-label">{t('settings_device_code')}</span>
                         <code>{oauthSession.userCode}</code>
                       </div>
                     )}
@@ -1242,8 +1632,8 @@ export default function App() {
                       </div>
                     )}
                     <div className="oauth-actions">
-                      <span className="oauth-hint">在浏览器完成授权后会自动检测。</span>
-                      <button onClick={() => { setOauthSession(null); stopOauthPoll(); }}>取消</button>
+                      <span className="oauth-hint">{t('settings_oauth_hint')}</span>
+                      <button onClick={() => { setOauthSession(null); stopOauthPoll(); }}>{t('settings_cancel')}</button>
                     </div>
                   </div>
                 )}
@@ -1267,13 +1657,13 @@ export default function App() {
           </div>
           <div className="setup-actions">
             {setupNotice.command && (
-              <button onClick={() => navigator.clipboard.writeText(setupNotice.command).catch(() => {})}>复制命令</button>
+              <button onClick={() => navigator.clipboard.writeText(setupNotice.command).catch(() => {})}>{t('banner_copy_cmd')}</button>
             )}
             <button onClick={() => refreshProviderStatus()} disabled={!connected || providerBusy}>
-              重新检测
+              {t('banner_recheck')}
             </button>
             {connected && setupNotice.level === 'warn' && (
-              <button onClick={() => setSettingsOpen(true)}>打开设置</button>
+              <button onClick={() => setSettingsOpen(true)}>{t('banner_open_settings')}</button>
             )}
           </div>
         </div>
@@ -1287,7 +1677,7 @@ export default function App() {
         }}
       >
         {entries.length === 0 && (
-          <div className="feed-empty">告诉 Hermes 你想做什么<br/>比如「查一下 Sonnet 4 最新论文，列三篇」</div>
+          <div className="feed-empty">{t('input_placeholder')}</div>
         )}
         {(() => {
           type Turn = { user?: Entry; body: Entry[] };
@@ -1325,14 +1715,14 @@ export default function App() {
               const hasError = g.tools.some((t) => t.kind === 'tool' && t.status === 'error');
               const allDone = done === total;
               const chipLabel = allDone
-                ? (hasError ? `🔧 ${total} 个工具（含错误）` : `🔧 ${total} 个工具`)
-                : `🔧 ${done}/${total} 工具中…`;
+                ? (hasError ? `🔧 ${t('feed_tool_count_with_err', { n: total })}` : `🔧 ${t('feed_tool_count', { n: total })}`)
+                : `🔧 ${done}/${total} ${t('feed_tool_running')}…`;
               prevAiAvatar.shown = false; // 工具组打断 ai 连续性
               return (
                 <details key={`g${gi}`} className="tool-group">
                   <summary className="tool-chip">{chipLabel}</summary>
                   <div className="tool-list">
-                    {g.tools.map((t, ti) => t.kind === 'tool' ? <ToolRow key={ti} t={t} index={ti + 1} /> : null)}
+                    {g.tools.map((tool, ti) => tool.kind === 'tool' ? <ToolRow key={ti} t={tool} index={ti + 1} /> : null)}
                   </div>
                 </details>
               );
@@ -1365,15 +1755,19 @@ export default function App() {
             if (e.kind === 'approval') {
               prevAiAvatar.shown = false;
               const cls = `approval-card ${e.status}`;
-              const title = e.status === 'pending' ? '🔐 Hermes 想执行' : e.status === 'approved' ? '✅ 已允许' : '🚫 已拒绝';
+              const title = e.status === 'pending'
+                ? `🔐 Hermes ${t('approval_want_run')}`
+                : e.status === 'approved'
+                  ? `✅ ${t('approval_allowed')}`
+                  : `🚫 ${t('approval_denied')}`;
               return (
                 <div key={i} className={cls}>
                   <div className="approval-title">{title}<span className="tool-tag">{e.tool}</span></div>
                   <div className="approval-args">{JSON.stringify(e.args)}</div>
                   {e.status === 'pending' && (
                     <div className="approval-actions">
-                      <button className="approval-btn allow" onClick={() => approveCall(e.id, true, e.session_id)}>允许</button>
-                      <button className="approval-btn deny" onClick={() => approveCall(e.id, false, e.session_id)}>拒绝</button>
+                      <button className="approval-btn allow" onClick={() => approveCall(e.id, true, e.session_id)}>{t('approval_allow')}</button>
+                      <button className="approval-btn deny" onClick={() => approveCall(e.id, false, e.session_id)}>{t('approval_deny')}</button>
                     </div>
                   )}
                 </div>
@@ -1382,14 +1776,14 @@ export default function App() {
             return null;
           };
 
-          return turns.map((t, ti) => {
+          return turns.map((turn, ti) => {
             const isLastTurn = ti === turns.length - 1;
             const turnRunning = isLastTurn && running;
 
             let bodyGroups: Group[];
             let trailingText: Entry | null = null;
             if (!turnRunning) {
-              const bodyCopy = [...t.body];
+              const bodyCopy = [...turn.body];
               for (let i = bodyCopy.length - 1; i >= 0; i--) {
                 if (bodyCopy[i].kind === 'text') {
                   trailingText = bodyCopy[i];
@@ -1399,7 +1793,7 @@ export default function App() {
               }
               bodyGroups = makeGroups(bodyCopy);
             } else {
-              bodyGroups = makeGroups(t.body);
+              bodyGroups = makeGroups(turn.body);
             }
 
             const hasProcess = bodyGroups.length > 0;
@@ -1408,20 +1802,20 @@ export default function App() {
               const thinkingCount = bodyGroups.filter((g) => g.kind === 'item' && g.entry.kind === 'thinking').length;
               const textCount = bodyGroups.filter((g) => g.kind === 'item' && g.entry.kind === 'text').length;
               const parts: string[] = [];
-              if (thinkingCount) parts.push(`${thinkingCount} 段思考`);
-              if (toolCount) parts.push(`${toolCount} 个工具`);
-              if (textCount) parts.push(`${textCount} 段中间回复`);
-              return `过程（${parts.join(' · ') || '0 步'}）`;
+              if (thinkingCount) parts.push(t('feed_thinking_segments', { n: thinkingCount }));
+              if (toolCount) parts.push(t('feed_tool_count', { n: toolCount }));
+              if (textCount) parts.push(t('feed_reply_segments', { n: textCount }));
+              return t('feed_process_label', { n: parts.join(' · ') || ('0 ' + t('feed_step')) });
             })();
 
             const aiTracker = { shown: false };
 
             return (
               <div key={ti} style={{ display: 'contents' }}>
-                {t.user && t.user.kind === 'user' && (
+                {turn.user && turn.user.kind === 'user' && (
                   <div className="msg-wrap user">
-                    <div className="msg user">{t.user.text}</div>
-                    <CopyBtn text={t.user.text} />
+                    <div className="msg user">{turn.user.text}</div>
+                    <CopyBtn text={turn.user.text} />
                   </div>
                 )}
                 {turnRunning ? (
@@ -1458,18 +1852,18 @@ export default function App() {
         })()}
       </div>
       {!following && hasNew && (
-        <button className="scroll-fab" onClick={jumpToBottom}>↓ 新消息</button>
+        <button className="scroll-fab" onClick={jumpToBottom}>↓ {t('feed_new_message')}</button>
       )}
       <div className="composer">
         <div className="composer-modebar">
-          <label className={`chip mode`} title={currentMode.label}>
+          <label className={`chip mode`} title={t(currentMode.labelKey)}>
             <span>{currentMode.icon}</span>
             <select
               value={settings.mode || 'auto'}
               onChange={(e) => updateSettings({ mode: e.target.value as ExecMode })}
             >
               {MODE_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
+                <option key={o.value} value={o.value}>{t(o.labelKey)}</option>
               ))}
             </select>
             <span className="chip-caret">▾</span>
@@ -1522,8 +1916,8 @@ export default function App() {
             </label>
             <div className="toolbar-spacer" />
             {running
-              ? <button className="stop-fab" onClick={stop} title="停止">■</button>
-              : <button className="send-fab" onClick={submit} disabled={!draft.trim() || !connected} title="发送 (⌘↩)">
+              ? <button className="stop-fab" onClick={stop} title={t('input_stop')}>■</button>
+              : <button className="send-fab" onClick={submit} disabled={!draft.trim() || !connected} title={`${t('input_send')} (⌘↩)`}>
                   {theme === 'synthwave' ? <>SEND <span className="send-arrow">▸</span></> : 'EXEC'}
                 </button>
             }
@@ -1536,14 +1930,15 @@ export default function App() {
   );
 }
 
-function ToolRow({ t, index }: { t: Entry & { kind: 'tool' }; index?: number }) {
+function ToolRow({ t: entry, index }: { t: Entry & { kind: 'tool' }; index?: number }) {
   const [open, setOpen] = useState(false);
-  const badgeText = t.status === 'pending' ? 'RUN' : t.status === 'ok' ? 'DONE' : 'ERR';
-  const fullArgs = (() => { try { return JSON.stringify(t.args, null, 2); } catch { return ''; } })();
+  const { t } = useT();
+  const badgeText = entry.status === 'pending' ? 'RUN' : entry.status === 'ok' ? 'DONE' : 'ERR';
+  const fullArgs = (() => { try { return JSON.stringify(entry.args, null, 2); } catch { return ''; } })();
   const resultText = (() => {
-    if (t.status === 'error') return t.error || '';
-    if (t.status === 'ok') {
-      try { const s = JSON.stringify(t.result, null, 2) ?? ''; return s.length > 2000 ? s.slice(0, 2000) + `\n... (${s.length} chars)` : s; } catch { return ''; }
+    if (entry.status === 'error') return entry.error || '';
+    if (entry.status === 'ok') {
+      try { const s = JSON.stringify(entry.result, null, 2) ?? ''; return s.length > 2000 ? s.slice(0, 2000) + `\n... (${s.length} chars)` : s; } catch { return ''; }
     }
     return '';
   })();
@@ -1553,15 +1948,15 @@ function ToolRow({ t, index }: { t: Entry & { kind: 'tool' }; index?: number }) 
     <>
       <div className="tool-row" title={fullArgs}>
         {num && <span className="tool-num">{num}</span>}
-        <span className="tool-name">{t.tool}</span>
-        <span className="tool-args">{shortArgs(t.args)}</span>
-        <span className={`tool-badge ${t.status}`}>{badgeText}</span>
-        {hasDetail && t.status !== 'pending' && (
-          <button className="tool-toggle" onClick={() => setOpen((v) => !v)} title={open ? '收起' : '展开'}>{open ? '▾' : '▸'}</button>
+        <span className="tool-name">{entry.tool}</span>
+        <span className="tool-args">{shortArgs(entry.args)}</span>
+        <span className={`tool-badge ${entry.status}`}>{badgeText}</span>
+        {hasDetail && entry.status !== 'pending' && (
+          <button className="tool-toggle" onClick={() => setOpen((v) => !v)} title={open ? t('feed_collapse') : t('feed_expand')}>{open ? '▾' : '▸'}</button>
         )}
       </div>
       {open && resultText && (
-        <div className={`tool-result ${t.status === 'error' ? 'error' : ''}`}>{resultText}</div>
+        <div className={`tool-result ${entry.status === 'error' ? 'error' : ''}`}>{resultText}</div>
       )}
     </>
   );

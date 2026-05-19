@@ -1,0 +1,18 @@
+{
+  "extName": {
+    "message": "Hermes in chrome",
+    "description": "Extension name shown in chrome://extensions"
+  },
+  "extDesc": {
+    "message": "AI browser agent in Chrome — Hermes lives in your sidebar.",
+    "description": "Short extension description"
+  },
+  "extActionTitle": {
+    "message": "Open Hermes sidebar",
+    "description": "Toolbar action button tooltip"
+  },
+  "extCommandToggleSidepanel": {
+    "message": "Toggle Hermes sidebar",
+    "description": "Description of the toggle-sidepanel keyboard shortcut"
+  }
+}

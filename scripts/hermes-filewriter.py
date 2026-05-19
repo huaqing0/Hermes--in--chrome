@@ -2,14 +2,14 @@
 """Hermes in Chrome — Native Messaging file writer host.
 
 Receives length-prefixed JSON requests on stdin from the extension and
-writes files to disk. Allows arbitrary paths under $HOME and
-/Volumes/, refuses obvious system paths.
+writes files anywhere the user has filesystem permission, except system
+paths and sensitive user dirs (.ssh, browser profiles, shell rc, etc.).
 
 Protocol (Chrome Native Messaging):
     [u32 little-endian length][UTF-8 JSON body]
 
 Request:
-    {"op": "write", "path": "...", "content": "...", "encoding": "utf8"|"base64", "create_dirs": true}
+    {"op": "write", "path": "...", "content": "...", "encoding": "utf8"|"base64", "create_dirs": true, "overwrite": false}
     {"op": "ping"}
 
 Response:
@@ -25,9 +25,19 @@ import sys
 from pathlib import Path
 
 LOG_PATH = Path.home() / ".hermes" / "logs" / "hermes-filewriter.log"
+INSTALL_META_PATH = Path.home() / ".hermes" / "hermes-in-chrome.json"
 
-# Refuse anything that resolves to these prefixes
-DENY_PREFIXES = (
+
+def _load_install_meta() -> dict:
+    try:
+        with INSTALL_META_PATH.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+# System paths shared across users — writing here breaks the OS or other accounts.
+DENY_SYSTEM_PREFIXES = (
     "/System",
     "/usr",
     "/bin",
@@ -38,6 +48,41 @@ DENY_PREFIXES = (
     "/private/etc",
     "/private/var/db",
 )
+
+
+def _user_sensitive_paths() -> tuple:
+    """Per-user paths agents should never touch: credentials, browser
+    profiles, shell rc files, Hermes' own config."""
+    home = str(Path.home().resolve())
+    return (
+        # Credentials / keys
+        f"{home}/.ssh",
+        f"{home}/.gnupg",
+        f"{home}/.aws",
+        f"{home}/.docker",
+        f"{home}/.kube",
+        f"{home}/.config/gcloud",
+        # Browser profiles / keychains / cookies
+        f"{home}/Library/Keychains",
+        f"{home}/Library/Application Support/Google/Chrome",
+        f"{home}/Library/Application Support/Chromium",
+        f"{home}/Library/Application Support/Firefox",
+        f"{home}/Library/Cookies",
+        f"{home}/Library/Safari",
+        # Single-file credentials
+        f"{home}/.netrc",
+        f"{home}/.npmrc",
+        f"{home}/.pypirc",
+        # Shell rc — overwriting hijacks the next shell session
+        f"{home}/.bashrc",
+        f"{home}/.bash_profile",
+        f"{home}/.zshrc",
+        f"{home}/.zprofile",
+        f"{home}/.zshenv",
+        f"{home}/.profile",
+        # Hermes' own state
+        f"{home}/.hermes",
+    )
 
 
 def log(line: str) -> None:
@@ -69,6 +114,13 @@ def send_message(obj) -> None:
     sys.stdout.buffer.flush()
 
 
+def _check_deny(resolved_str: str) -> None:
+    """Uniform exact-or-prefix match; works for both directories and single files."""
+    for deny in DENY_SYSTEM_PREFIXES + _user_sensitive_paths():
+        if resolved_str == deny or resolved_str.startswith(deny + "/"):
+            raise ValueError(f"refusing to write protected path: {deny}")
+
+
 def resolve_safe_path(raw: str) -> Path:
     if not raw or not isinstance(raw, str):
         raise ValueError("path is required")
@@ -77,25 +129,24 @@ def resolve_safe_path(raw: str) -> Path:
     if not p.is_absolute():
         raise ValueError(f"path must be absolute, got: {raw}")
     resolved = p.resolve(strict=False)
-    s = str(resolved)
-    for deny in DENY_PREFIXES:
-        if s == deny or s.startswith(deny + "/"):
-            raise ValueError(f"refusing to write under system path: {s}")
-    if s in ("/", ""):
-        raise ValueError("refusing to write to root")
+    if resolved == Path("/").resolve():
+        raise ValueError("refusing to write to root directory")
+    _check_deny(str(resolved))
     return resolved
 
 
 def handle(req):
     op = req.get("op")
     if op == "ping":
-        return {"ok": True, "pong": True}
+        meta = _load_install_meta()
+        return {"ok": True, "pong": True, "repoRoot": meta.get("repoRoot")}
     if op != "write":
         raise ValueError(f"unknown op: {op}")
 
     path = resolve_safe_path(req.get("path", ""))
     encoding = (req.get("encoding") or "utf8").lower()
     create_dirs = bool(req.get("create_dirs", True))
+    overwrite = bool(req.get("overwrite", False))
     content = req.get("content")
     if content is None:
         raise ValueError("content is required")
@@ -114,10 +165,15 @@ def handle(req):
     if create_dirs:
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    with path.open("wb") as f:
+    existed = path.exists()
+    if existed and not overwrite:
+        raise ValueError(f"refusing to overwrite existing file without overwrite=true: {path}")
+
+    mode = "wb" if overwrite else "xb"
+    with path.open(mode) as f:
         f.write(data)
 
-    return {"ok": True, "path": str(path), "bytes_written": len(data)}
+    return {"ok": True, "path": str(path), "bytes_written": len(data), "overwritten": existed}
 
 
 def main() -> None:

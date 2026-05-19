@@ -242,7 +242,8 @@ TOOLS: list[tuple[str, str, dict]] = [
             "name": "ext_type",
             "description": (
                 "在输入框/富文本框输入文本，并验证页面真实内容精确等于该文本。"
-                "工具会锁定当前输入作用域；普通输入框走原生 value，X/YouTube 等富文本框走临时剪贴板粘贴并恢复剪贴板。"
+                "工具会锁定当前输入作用域；普通输入框走原生 value，X/YouTube 等富文本框只粘贴一次，随后等待并复查，不会二次粘贴。"
+                "富文本成功结果包含 clipboard_restore_mode，说明剪贴板是完整恢复、纯文本降级恢复，还是恢复失败。"
                 "可选 submit=true 只会在验证成功后自动按 Enter。"
                 "若返回错误或 verified 不是 true，必须刷新/重新打开输入页面，不要换 ref_id 重试，更不要继续点击发布/发送。"
                 "在 X/YouTube/真实账号页面严禁输入 test、hello、测试 等与用户原文不同的探测文本。"
@@ -408,10 +409,14 @@ TOOLS: list[tuple[str, str, dict]] = [
                 "调用本地 hermes-filewriter 进程。需要用户先跑过 install-native-host 安装步骤。"
                 "用于持久化：ext_fetch_url 拿到的 HTML/文本、ext_read_page 的 a11y 树、"
                 "ext_screenshot 截图（必须 encoding='base64'）、ext_extract_markdown 生成的 Markdown。"
-                "路径必须是绝对路径（如 /Volumes/your-ssd/AI video/foo.html 或 ~/Downloads/x.md，"
-                "~ 会被本地 host 展开到 $HOME）。系统目录（/System /usr /bin /sbin /etc 等）会被拒绝。"
+                "路径必须是绝对路径（如 ~/Downloads/page.md、~/Documents/Hermes/note.html，"
+                "或your-ssd /Volumes/.../x.md），~ 会被本地 host 展开到 $HOME。"
+                "用户文件系统下的任何位置都可以写，但系统目录（/System、/usr、/etc 等）"
+                "和敏感用户目录（~/.ssh、~/.aws、浏览器 profile、~/.zshrc 等 shell rc）会被拒绝，"
+                "防止意外覆盖凭据或劫持 shell。"
+                "默认拒绝覆盖已有文件；确实要覆盖时必须显式传 overwrite=true。"
                 "文件名由你自己决定，建议 {host}_{slug}_{YYYYMMDD-HHmmss}.{ext} 之类避免重名。"
-                "成功返回 {saved:true, path, bytes_written, encoding}；失败抛错并提示如何安装 host。"
+                "成功返回 {saved:true, path, bytes_written, encoding, overwritten}；失败抛错并提示如何安装 host。"
             ),
             "parameters": {
                 "type": "object",
@@ -432,6 +437,10 @@ TOOLS: list[tuple[str, str, dict]] = [
                     "create_dirs": {
                         "type": "boolean",
                         "description": "父目录不存在时是否自动 mkdir -p（默认 true）",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "是否允许覆盖已有文件（默认 false；除非用户明确要求，否则不要设为 true）",
                     },
                 },
                 "required": ["path", "content"],
@@ -553,7 +562,7 @@ EXTRA_SYSTEM_PROMPT = """\
 - ext_read_page(ref_id?, depth?, filter?) — 读当前页 a11y 树，拿可点击元素的 ref_id
 - ext_find(query) — 在大页面里按自然语言找候选 ref_id，再 click/type
 - ext_click(ref_id) — 真实点击
-- ext_type(ref_id, text, submit?) — 原子输入文本；普通输入框走原生 value，X/YouTube 富文本框走临时剪贴板粘贴并恢复剪贴板，验证当前输入作用域内内容精确等于目标文本；只有 verified=true 才能继续提交
+- ext_type(ref_id, text, submit?) — 原子输入文本；普通输入框走原生 value，X/YouTube 富文本框只走一次临时剪贴板粘贴，然后等待并复查，不会二次粘贴；验证当前输入作用域内内容精确等于目标文本；只有 verified=true 才能继续提交
 - ext_key(key) — 按键盘快捷键，如 'Enter'、'Meta+Enter'（Mac Cmd+Enter）、'Ctrl+Enter'
 - ext_browser_batch(actions) — 批量执行多个可预测浏览器动作，减少 round-trip
 - ext_scroll / ext_scroll_to / ext_screenshot / ext_wait / ext_get_console_logs

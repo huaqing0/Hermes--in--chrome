@@ -29,35 +29,31 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
    └─ content scripts (a11y-tree isolated world 自动注入)
 ```
 
-## 从 GitHub 下载和安装
+## 安装
 
-当前版本需要本地构建后，以“加载已解压的扩展程序”的方式安装。
+> 前提：已经装好 [Hermes Agent](https://github.com/huaqing0/hermes-agent)（默认装在 `~/.hermes/hermes-agent/`）。
 
-推荐一键安装：
+三步走：
 
-```bash
-git clone https://github.com/huaqing0/hermes-in-chrome.git
-cd hermes-in-chrome
-npm run setup
-```
+1. **克隆 + 构建**：
 
-`npm run setup` 会安装依赖、检测/启动 Hermes gateway，并构建扩展。
+   ```bash
+   git clone https://github.com/huaqing0/hermes-in-chrome.git
+   cd hermes-in-chrome
+   npm install && npm run build
+   ```
 
-如果你想手动分步执行：
+2. **Chrome 加载扩展**：`chrome://extensions` → 右上角开「开发者模式」→ 「加载已解压的扩展程序」→ 选本项目的 `dist/` 目录
 
-```bash
-npm install
-npm run backend:ensure
-npm run build
-```
+3. **`Cmd+H` / `Ctrl+H` 打开 sidepanel** —— 按顶部状态条的引导一步步跑命令即可，**不需要自己抄扩展 ID 或翻 README 找命令**
 
-然后在 Chrome 里打开：
+状态条会依次引导你：
 
-1. 进入 `chrome://extensions`
-2. 打开右上角“开发者模式”
-3. 点击“加载已解压的扩展程序”
-4. 选择本项目生成的 `dist/` 目录
-5. 点工具栏图标或按 `Cmd+H` / `Ctrl+H` 打开 sidepanel
+- ① 启动本地 Hermes 后端（一键复制 `npm run backend:ensure` 到终端跑）
+- ② 注册 Native Messaging host（自动填好你的扩展 ID，一键复制整条命令）
+- ③ 选 provider / 填 API Key（或走 OAuth）
+
+三项全绿后状态条会自动折叠成一行小绿点 `● 后端 ● Host ● Provider`，点击可重新展开。
 
 开发模式（热重载）：
 
@@ -65,7 +61,7 @@ npm run build
 npm start
 ```
 
-如果只是普通使用，推荐走 `npm run setup` + 加载 `dist/`；`npm start` 更适合开发调试。
+（普通使用走上面三步即可；`npm start` 适合改 React 代码时热重载用。）
 
 ## 后端自动检测和启动
 
@@ -173,21 +169,21 @@ MINIMAX_API_KEY=...
 - `read_page` 和 `ref_id` 操作走 `chrome.scripting.executeScript` 的 **isolated-world**，避免把 a11y tree 暴露到页面主世界
 - `browser_batch` 合并可预测的连续动作，减少工具调用 round-trip
 - `key` 支持 `Meta+Enter` 这类组合键，供 X / Twitter 等页面走键盘提交
-- `type` 对 X / YouTube 等富文本框会临时使用剪贴板粘贴整段文本，并在完成后尽量恢复原剪贴板，避免逐字输入导致缺字或重复
-- `save_to_local` 通过本地 Native Messaging host 把任意文本/二进制内容写到本地任意路径（含 `/Volumes/...`），需要先跑一次安装步骤；`extract_markdown` 把当前 Chrome 页面正文转 Markdown，常和 `save_to_local` 配合做"抓页面 + 落盘"
+- `type` 对 X / YouTube 等富文本框会临时使用剪贴板粘贴整段文本，并在完成后恢复剪贴板；如果只能恢复纯文本，会在工具结果里标明 `clipboard_restore_mode`
+- `save_to_local` 通过本地 Native Messaging host 把任意文本/二进制内容写到本地任何用户可写位置（除系统目录和 `~/.ssh` 等敏感目录外），无需任何配置，需要先跑一次安装步骤；`extract_markdown` 把当前 Chrome 页面正文转 Markdown，常和 `save_to_local` 配合做"抓页面 + 落盘"
 
 ## 保存抓取内容到本地（Native Messaging）
 
-`save_to_local` 让 agent 把 `fetch_url` 的 HTML、`read_page` 的 a11y 树、`screenshot` 的截图、`extract_markdown` 的 Markdown 等任意内容写到本地任意绝对路径（包括 `/Volumes/...`、`~/Downloads/...`）。Chrome 扩展本身不能直接写文件，所以走 Native Messaging 调用一个本地 Python 小进程 `hermes-filewriter.py`。
+`save_to_local` 让 agent 把 `fetch_url` 的 HTML、`read_page` 的 a11y 树、`screenshot` 的截图、`extract_markdown` 的 Markdown 等内容写到本地文件。路径可以是用户文件系统下的任何位置（`~/Downloads/`、`/Volumes/your-ssd/`、`/tmp/` 等都可以），无需任何配置。Chrome 扩展本身不能直接写文件，所以走 Native Messaging 调用一个本地 Python 小进程 `hermes-filewriter.py`。
 
-**首次安装（一次性）**：
+**首次安装（一次性）**：推荐打开 sidepanel，按顶部状态条引导走，**它会自动填好你的扩展 ID 并给出一键复制的命令**。如果你想手动跑：
 
-1. 先在 Chrome 加载好 `dist/`，到 `chrome://extensions` 复制 Hermes in Chrome 的 ID（32 位 a-p 小写字母）
+1. 到 `chrome://extensions` 复制 Hermes in Chrome 的 ID（32 位 a-p 小写字母）
 2. 注册 Native Messaging host：
 
-```bash
-npm run native-host:install -- <你的扩展ID>
-```
+   ```bash
+   npm run native-host:install -- <你的扩展ID>
+   ```
 
 这个脚本会：
 
@@ -197,7 +193,8 @@ npm run native-host:install -- <你的扩展ID>
 
 **安全边界**：
 
-- host 接受绝对路径并展开 `~`，会拒绝写入 `/System` `/usr` `/bin` `/sbin` `/etc` 等系统目录
+- host 接受绝对路径并展开 `~`，可以写到用户文件系统下任何位置；系统目录（`/System`、`/usr` 等）和敏感用户目录（`~/.ssh`、`~/.aws`、浏览器 profile、`~/.zshrc` 等 shell rc）始终被拒绝，防止 prompt injection 取走凭据或劫持 shell
+- 默认拒绝覆盖已有文件；确实要覆盖时，工具调用必须显式传 `overwrite=true`
 - 单次写入最大 64 MB
 - 日志写到 `~/.hermes/logs/hermes-filewriter.log`
 
@@ -205,7 +202,7 @@ npm run native-host:install -- <你的扩展ID>
 
 ```text
 ext_extract_markdown()                # 返回 {url, title, markdown}
-→ ext_save_to_local(path="/Volumes/your-ssd/Notes/x.md", content=<上一步.markdown>)
+→ ext_save_to_local(path="~/Downloads/page.md", content=<上一步.markdown>)
 
 ext_screenshot()                      # 返回 base64
 → ext_save_to_local(path="~/Downloads/page.jpg", content=<base64>, encoding="base64")
@@ -218,7 +215,7 @@ ext_screenshot()                      # 返回 base64
 - **后端**：Hermes Agent（第三方项目，独立维护），监听 `127.0.0.1:8642`，提供 `/api/ws/extension` WebSocket endpoint
 - 后端的 5 个 provider handler（`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`）以及浏览器工具桥需要在 Hermes Agent 里注册
 - 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动，或用 `npm run backend:watch` 持续守护
-- 扩展请求 `clipboardRead` / `clipboardWrite` 只用于本地富文本输入：临时保存用户原剪贴板、写入要粘贴的文本、完成后恢复；不会把剪贴板内容发送到远程服务
+- 扩展请求 `clipboardRead` / `clipboardWrite` 只用于本地富文本输入：临时保存用户原剪贴板、写入要粘贴的文本、完成后恢复；能使用完整 Clipboard API 时会保留图片/富文本等类型，否则降级为纯文本恢复，并在工具结果里标明；不会把剪贴板内容发送到远程服务
 
 ### WebSocket 协议契约
 

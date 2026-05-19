@@ -21,7 +21,8 @@ type TypeResult = {
   scope_kind: string;
   submit_button_disabled: false;
   actual_text_preview: string;
-  clipboard_restored?: boolean;
+  clipboard_restore_mode?: 'full' | 'text' | 'failed';
+  clipboard_restore_error?: string;
 };
 type EditableStatus = {
   ok: boolean;
@@ -93,17 +94,17 @@ async function markRichTextDirty(tabId: number, sessionId: string, reason: strin
 }
 
 function richTextDirtyError(dirty: { reason: string }): string {
-  return `前一次富文本输入失败，页面可能还有 X/YouTube 隐藏草稿残留，已禁止继续输入或提交。请刷新页面或重新打开发布框后再试。原因：${dirty.reason}`;
+  return `Previous rich-text input failed; the page may still have hidden X/YouTube draft residue. Further input/submit is blocked — refresh the page or reopen the compose dialog and retry. Reason: ${dirty.reason}`;
 }
 
 async function getCurrentTab(sessionId: string): Promise<number> {
   const state = sessionStates.get(sessionId);
-  if (!state) throw new Error(`Session ${sessionId} 未初始化（请先 bindSessionToTab）`);
+  if (!state) throw new Error(`Session ${sessionId} not initialized (call bindSessionToTab first)`);
   try {
     await chrome.tabs.get(state.currentTabId);
     return state.currentTabId;
   } catch {
-    throw new Error(`Session ${sessionId} 的 tab ${state.currentTabId} 已关闭`);
+    throw new Error(`Session ${sessionId} tab ${state.currentTabId} has been closed`);
   }
 }
 
@@ -128,7 +129,7 @@ async function runInPage<T>(tabId: number, func: (...args: any[]) => T, args: un
     func,
     args,
   });
-  if (!results.length) throw new Error('页面脚本没有返回结果');
+  if (!results.length) throw new Error('Page script returned no result');
   return results[0].result as T;
 }
 
@@ -143,7 +144,7 @@ async function ensureClipboardOffscreen(): Promise<void> {
     await chrome.offscreen.createDocument({
       url: 'src/offscreen/offscreen.html',
       reasons: [chrome.offscreen.Reason.BLOBS, chrome.offscreen.Reason.CLIPBOARD],
-      justification: '富文本输入需要临时写入并恢复剪贴板',
+      justification: 'Rich-text input needs temporary clipboard write/restore',
     });
   } catch (e) {
     if (await chrome.offscreen.hasDocument?.()) return;
@@ -151,25 +152,39 @@ async function ensureClipboardOffscreen(): Promise<void> {
   }
 }
 
-async function clipboardReadText(): Promise<string> {
+type ClipboardSnapshot =
+  | { mode: 'full'; items: Array<{ types: Array<{ type: string; dataUrl: string }> }> }
+  | { mode: 'text'; text: string };
+
+type ClipboardRestoreResult = { mode: 'full' | 'text' | 'failed'; error?: string };
+
+async function clipboardReadSnapshot(): Promise<ClipboardSnapshot> {
   await ensureClipboardOffscreen();
-  const resp = await chrome.runtime.sendMessage({ type: 'HERMES_CLIPBOARD_READ' }) as { ok?: boolean; value?: string; error?: string };
-  if (!resp?.ok) throw new Error(resp?.error || '无法读取剪贴板');
-  return resp.value ?? '';
+  const resp = await chrome.runtime.sendMessage({ type: 'HERMES_CLIPBOARD_READ' }) as { ok?: boolean; snapshot?: ClipboardSnapshot; error?: string };
+  if (!resp?.ok) throw new Error(resp?.error || 'Failed to read clipboard');
+  if (!resp.snapshot) throw new Error('Clipboard read returned empty snapshot');
+  return resp.snapshot;
 }
 
 async function clipboardWriteText(text: string): Promise<void> {
   await ensureClipboardOffscreen();
-  const resp = await chrome.runtime.sendMessage({ type: 'HERMES_CLIPBOARD_WRITE', text }) as { ok?: boolean; error?: string };
-  if (!resp?.ok) throw new Error(resp?.error || '无法写入剪贴板');
+  const resp = await chrome.runtime.sendMessage({ type: 'HERMES_CLIPBOARD_WRITE_TEXT', text }) as { ok?: boolean; error?: string };
+  if (!resp?.ok) throw new Error(resp?.error || 'Failed to write to clipboard');
 }
 
-async function withTemporaryClipboard<T>(text: string, run: () => Promise<T>): Promise<{ result: T; clipboardRestored: boolean }> {
-  let original: string;
+async function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): Promise<ClipboardRestoreResult> {
+  await ensureClipboardOffscreen();
+  const resp = await chrome.runtime.sendMessage({ type: 'HERMES_CLIPBOARD_RESTORE', snapshot }) as ClipboardRestoreResult & { ok?: boolean };
+  if (!resp?.ok) return { mode: 'failed', error: resp?.error || 'Failed to restore clipboard' };
+  return { mode: resp.mode, error: resp.error };
+}
+
+async function withTemporaryClipboard<T>(text: string, run: () => Promise<T>): Promise<{ result: T; clipboardRestore: ClipboardRestoreResult }> {
+  let original: ClipboardSnapshot;
   try {
-    original = await clipboardReadText();
+    original = await clipboardReadSnapshot();
   } catch (e) {
-    throw new Error(`读取原剪贴板失败，已停止富文本输入以避免覆盖用户剪贴板：${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`Failed to snapshot original clipboard; rich-text input aborted to avoid overwriting user clipboard: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   await clipboardWriteText(text);
@@ -182,24 +197,16 @@ async function withTemporaryClipboard<T>(text: string, run: () => Promise<T>): P
     caught = e;
   }
 
-  let clipboardRestored = false;
-  try {
-    await clipboardWriteText(original);
-    clipboardRestored = true;
-  } catch (e) {
-    if (!caught) {
-      throw new Error(`富文本输入完成，但恢复剪贴板失败：${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
+  const clipboardRestore = await restoreClipboardSnapshot(original);
 
   if (caught) {
     if (caught instanceof Error) {
-      (caught as Error & { clipboardRestored?: boolean }).clipboardRestored = clipboardRestored;
+      (caught as Error & { clipboardRestore?: ClipboardRestoreResult }).clipboardRestore = clipboardRestore;
     }
     throw caught;
   }
 
-  return { result: result as T, clipboardRestored };
+  return { result: result as T, clipboardRestore };
 }
 
 async function waitForTabComplete(tabId: number, timeoutMs = 15000): Promise<boolean> {
@@ -227,7 +234,7 @@ async function readPage(sessionId: string, args: { ref_id?: string; depth?: numb
   const url = tab.url || '';
   if (/^(chrome|edge|brave|chrome-extension|devtools|view-source|about):/.test(url)) {
     return {
-      error: `当前页面 (${url}) 是浏览器内部页，无法读取。请先 navigate 到普通网页。`,
+      error: `Current page (${url}) is a browser-internal URL and cannot be read. Navigate to a normal web page first.`,
       pageContent: '',
       url,
     };
@@ -242,14 +249,14 @@ async function readPage(sessionId: string, args: { ref_id?: string; depth?: numb
         tabId,
         (filter, depth, refId) => {
           if (typeof window.__hermesGenerateA11yTree !== 'function') {
-            return { error: 'a11y tree script 未注入', pageContent: '', viewport: { width: window.innerWidth, height: window.innerHeight } };
+            return { error: 'a11y tree script not injected', pageContent: '', viewport: { width: window.innerWidth, height: window.innerHeight } };
           }
           return window.__hermesGenerateA11yTree(filter, depth, null, refId);
         },
         [args.filter ?? 'all', args.depth ?? 15, args.ref_id ?? null],
       );
       if (parsed && (parsed.pageContent || parsed.error)) return { ...parsed, url: tab.url, title: tab.title };
-      lastErr = 'executeScript 返回空结果';
+      lastErr = 'executeScript returned an empty result';
     } catch (e) {
       lastErr = e instanceof Error ? e.message : String(e);
     }
@@ -264,7 +271,7 @@ async function readPage(sessionId: string, args: { ref_id?: string; depth?: numb
     url: location.href,
   })).catch(() => ({}));
   return {
-    error: `read_page 失败（尝试 3 次）：${lastErr}。如果只是要读公开网页内容，建议改用 fetch_url。`,
+    error: `read_page failed after 3 attempts: ${lastErr}. If you just need the public page content, use fetch_url instead.`,
     pageContent: '',
     url: tab.url,
     debug: parsedDebug,
@@ -287,7 +294,7 @@ async function refIdToCoords(tabId: number, refId: string): Promise<{ x: number;
     },
     [refId],
   );
-  if (!coords) throw new Error(`ref_id ${refId} 不存在或元素已移除`);
+  if (!coords) throw new Error(`ref_id ${refId} not found or element removed`);
   return coords;
 }
 
@@ -353,8 +360,8 @@ function isRichTextTarget(kind: string): boolean {
 function typedTextError(status: Pick<EditableStatus, 'actual_text'>, expected: string): string | undefined {
   if (normalizedEquals(status.actual_text, expected)) return undefined;
   const repeats = repeatedExpectedCount(status.actual_text, expected);
-  if (repeats > 1) return `输入内容重复了 ${repeats} 次，已阻止继续提交`;
-  return '目标编辑器内容与要输入的文本不一致';
+  if (repeats > 1) return `Input text appears ${repeats} times in the editor; submission blocked`;
+  return 'Target editor content does not match the text to input';
 }
 
 async function prepareAtomicType(tabId: number, refId: string | undefined, token: string): Promise<AtomicTypePreparation> {
@@ -544,7 +551,7 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
           actual_text: targetText,
           snapshots: [],
           tried,
-          error: '清空目标编辑器失败，未执行输入',
+          error: 'Failed to clear target editor; input not executed',
         };
       }
 
@@ -568,7 +575,7 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
           actual_text: targetText,
           snapshots,
           tried,
-          error: '输入作用域内存在其他未清空编辑器，未执行输入',
+          error: 'Other un-cleared editors exist in the input scope; input not executed',
         };
       }
 
@@ -687,7 +694,7 @@ async function inspectAtomicType(tabId: number, token: string, expected: string)
       }
 
       if (!target) {
-        return { ok: false, target_kind: 'none', scope_kind: scopeKind(scope), actual_text: '', residue_preview: '', placeholder_visible: false, error: '目标编辑器标记丢失', tried };
+        return { ok: false, target_kind: 'none', scope_kind: scopeKind(scope), actual_text: '', residue_preview: '', placeholder_visible: false, error: 'Target editor marker lost', tried };
       }
 
       const actual = readText(target);
@@ -779,7 +786,7 @@ async function inspectAtomicDraft(tabId: number, token: string): Promise<DraftIn
           all_text: '',
           residue_preview: '',
           tried,
-          error: '目标编辑器标记丢失',
+          error: 'Target editor marker lost',
         };
       }
 
@@ -882,7 +889,7 @@ async function rollbackAtomicType(tabId: number, token: string, expected: string
         actual_text: actual,
         residue_preview: residue,
         placeholder_visible: false,
-        error: '输入验证失败，已回滚本次输入残留',
+        error: 'Input verification failed; residue has been rolled back',
         rollback,
         tried,
       };
@@ -987,24 +994,23 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       await refocusAtomicTarget(tabId, token, tried);
 
       let status: EditableStatus;
-      let clipboardRestored = false;
+      let clipboardRestore: ClipboardRestoreResult = { mode: 'failed', error: 'Clipboard restore was not performed' };
       try {
         const pasted = await withTemporaryClipboard(args.text, async () => {
           await pasteClipboardIntoFocusedEditable(tabId, tried);
           let inspect = await inspectAtomicType(tabId, token, args.text);
-          // X 的 ProseMirror 处理 paste 是异步的；偶发 320ms 不够。
-          // 一次重试 + 拉长等待，拦掉抖动；第二次仍失败才走真失败回滚。
-          if (!inspect.ok) {
-            tried.push('cdp_paste_command_retry');
-            await refocusAtomicTarget(tabId, token, tried);
-            await cdp.paste(tabId);
-            await sleep(720);
+          // X/YouTube 的富文本 paste 可能异步落盘；只等待和复查，
+          // 绝不再次粘贴，避免同一段文本被页面接收两次。
+          for (const delay of [280, 560, 900]) {
+            if (inspect.ok) break;
+            tried.push(`clipboard_paste_verify_wait_${delay}`);
+            await sleep(delay);
             inspect = await inspectAtomicType(tabId, token, args.text);
           }
           return inspect;
         });
         status = pasted.result;
-        clipboardRestored = pasted.clipboardRestored;
+        clipboardRestore = pasted.clipboardRestore;
       } catch (e) {
         richTextUnsafeFailure = true;
         await clearFocusedEditableWithTrustedKeys(tabId, tried);
@@ -1036,7 +1042,8 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
           scope_kind: status.scope_kind,
           submit_button_disabled: false,
           actual_text_preview: (status.actual_text || '').slice(0, 160),
-          clipboard_restored: clipboardRestored,
+          clipboard_restore_mode: clipboardRestore.mode,
+          clipboard_restore_error: clipboardRestore.error,
         } satisfies TypeResult;
       }
 
@@ -1110,7 +1117,7 @@ async function scroll(sessionId: string, args: { direction: 'up' | 'down' | 'top
 
 async function navigate(sessionId: string, args: { url: string }) {
   const state = sessionStates.get(sessionId);
-  if (!state) throw new Error(`Session ${sessionId} 未初始化`);
+  if (!state) throw new Error(`Session ${sessionId} not initialized`);
   const tabId = state.currentTabId;
   await chrome.tabs.update(tabId, { url: args.url });
   const ready = await waitForTabComplete(tabId);
@@ -1121,9 +1128,9 @@ async function navigate(sessionId: string, args: { url: string }) {
 
 async function openTab(sessionId: string, args: { url: string }) {
   const state = sessionStates.get(sessionId);
-  if (!state) throw new Error(`Session ${sessionId} 未初始化`);
+  if (!state) throw new Error(`Session ${sessionId} not initialized`);
   const tab = await chrome.tabs.create({ url: args.url, active: false });
-  if (tab.id == null) throw new Error('chrome.tabs.create 没返回 id');
+  if (tab.id == null) throw new Error('chrome.tabs.create returned no id');
   await tg.addTabToSessionGroup(sessionId, tab.id);
   state.currentTabId = tab.id; // 切到新 tab 上操作
   const ready = await waitForTabComplete(tab.id);
@@ -1137,7 +1144,7 @@ async function screenshotTool(sessionId: string, _args: Record<string, unknown>)
 }
 
 async function fetchUrl(_sessionId: string, args: { url: string }) {
-  if (!args.url) return { error: 'url 参数缺失' };
+  if (!args.url) return { error: 'url argument is required' };
   try {
     const r = await fetch(args.url, {
       redirect: 'follow',
@@ -1226,7 +1233,7 @@ function scoreA11yLine(line: string, terms: string[]): number {
 }
 
 async function findElement(sessionId: string, args: { query: string; tabId?: number; limit?: number }) {
-  if (!args.query?.trim()) return { error: 'query 参数缺失' };
+  if (!args.query?.trim()) return { error: 'query argument is required' };
   const prevTabId = getSessionTab(sessionId);
   if (args.tabId != null) bindSessionToTab(sessionId, args.tabId);
   try {
@@ -1249,22 +1256,23 @@ async function findElement(sessionId: string, args: { query: string; tabId?: num
 
 async function saveToLocal(
   _sessionId: string,
-  args: { path: string; content: string; encoding?: 'utf8' | 'base64'; create_dirs?: boolean },
+  args: { path: string; content: string; encoding?: 'utf8' | 'base64'; create_dirs?: boolean; overwrite?: boolean },
 ) {
   if (!args || typeof args.path !== 'string' || !args.path.trim()) {
-    throw new Error('path 参数缺失（必须是绝对路径）');
+    throw new Error('path argument is required (must be absolute)');
   }
   if (typeof args.content !== 'string') {
-    throw new Error('content 参数缺失（字符串；二进制请用 base64 编码并设 encoding=base64）');
+    throw new Error('content argument is required (string; for binaries use base64 + encoding=base64)');
   }
   const encoding = args.encoding === 'base64' ? 'base64' : 'utf8';
   const create_dirs = args.create_dirs !== false;
+  const overwrite = args.overwrite === true;
 
   const resp = await new Promise<any>((resolve, reject) => {
     try {
       chrome.runtime.sendNativeMessage(
         'com.hermes.filewriter',
-        { op: 'write', path: args.path, content: args.content, encoding, create_dirs },
+        { op: 'write', path: args.path, content: args.content, encoding, create_dirs, overwrite },
         (response) => {
           const err = chrome.runtime.lastError;
           if (err) return reject(new Error(err.message || String(err)));
@@ -1277,19 +1285,19 @@ async function saveToLocal(
   }).catch((e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `Native Messaging 调用失败：${msg}。请先安装 host：` +
-        `cd hermes-in-chrome && node scripts/install-native-host.mjs <扩展ID>`,
+      `Native Messaging 调用失败：${msg}。请打开 Hermes sidepanel 顶部状态条按提示安装 host。`,
     );
   });
 
   if (!resp || resp.ok !== true) {
-    throw new Error(`写文件失败：${resp?.error || '未知错误'}`);
+    throw new Error(`Failed to write file: ${resp?.error || 'unknown error'}`);
   }
   return {
     saved: true,
     path: resp.path,
     bytes_written: resp.bytes_written,
     encoding,
+    overwritten: !!resp.overwritten,
   };
 }
 
@@ -1432,19 +1440,19 @@ async function extractMarkdown(
 
 async function browserBatch(sessionId: string, args: { actions?: BatchAction[] }) {
   const actions = args.actions || [];
-  if (!Array.isArray(actions) || actions.length === 0) return { error: 'actions 参数缺失' };
-  if (actions.length > 20) return { error: '一次 browser_batch 最多执行 20 个动作' };
+  if (!Array.isArray(actions) || actions.length === 0) return { error: 'actions argument is required' };
+  if (actions.length > 20) return { error: 'browser_batch supports at most 20 actions per call' };
   const results = [];
   for (let i = 0; i < actions.length; i++) {
     const action = actions[i];
     const tool = action.tool || action.name;
     const input = action.args || action.input || {};
     if (!tool) {
-      results.push({ index: i, ok: false, error: 'tool/name 缺失' });
+      results.push({ index: i, ok: false, error: 'tool/name missing' });
       break;
     }
     if (tool === 'browser_batch') {
-      results.push({ index: i, tool, ok: false, error: 'browser_batch 不能嵌套调用自身' });
+      results.push({ index: i, tool, ok: false, error: 'browser_batch cannot call itself recursively' });
       break;
     }
     try {
@@ -1480,6 +1488,6 @@ const TOOLS: Record<ToolName, (sessionId: string, args: any) => Promise<unknown>
 
 export async function execute(sessionId: string, tool: ToolName, args: Record<string, unknown>) {
   const fn = TOOLS[tool];
-  if (!fn) throw new Error(`未知工具: ${tool}`);
+  if (!fn) throw new Error(`Unknown tool: ${tool}`);
   return fn(sessionId, args);
 }

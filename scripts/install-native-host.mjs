@@ -81,4 +81,14 @@ if (!existsSync(destHost)) {
   process.exit(1);
 }
 
+// 记录 repoRoot 供 sidepanel 拿来拼 `cd <root> && npm run ...` 一键复制命令
+const metaPath = join(home, '.hermes', 'hermes-in-chrome.json');
+const meta = {
+  repoRoot,
+  installedAt: new Date().toISOString(),
+  extensionIds: extIds,
+};
+await fs.writeFile(metaPath, JSON.stringify(meta, null, 2) + '\n');
+console.log(`✔ wrote install meta → ${metaPath}`);
+
 console.log('\n下一步：在 Chrome 里重新加载 Hermes 扩展，然后用 ext_save_to_local 试一下。');
