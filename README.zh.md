@@ -1,13 +1,36 @@
-# Hermes in chrome
-
-> Hermes Agent 住在 Chrome 里 — 浏览器自动化扩展。
-> 灵感来自 Claude in Chrome v1.0.70，接入本地 [Hermes Agent](https://github.com/huaqing0/hermes-agent) (`ws://127.0.0.1:8642`)。
-
-[← English version](./README.md)
+# Hermes in Chrome
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
+
+> 一个住在 Chrome 侧边栏里的 AI 助手 — 能浏览网页、阅读页面、点击按钮、填写表单、截图、保存文件。你跟它聊天，它操作浏览器。
+>
+> [← English version](./README.md)
+
+![Hermes sidepanel](docs/sidepanel.png)
+
+## 能干什么
+
+用自然语言让它操作浏览器：
+
+- **调研**：「找本月 LLM 评测领域前三的论文，分别总结。」
+- **自动化**：「去我的 GitHub issues，打开前 5 个，保存为 markdown。」
+- **数据提取**：「把这个页面的商品列表抓成 CSV。」
+- **网页交互**：「登录这个后台，下载最新报表，发邮件给我。」
+
+Agent 会自己开一组 Tab，通过无障碍树读页面，用 Chrome DevTools 真截图、真点击、真打字——你在自己的 Tab 里照常工作，互不干扰。
+
+## 你需要准备
+
+| 条件 | 去哪获取 |
+|------|---------|
+| **Hermes Agent** v0.2.0+ | [github.com/huaqing0/hermes-agent](https://github.com/huaqing0/hermes-agent) — 本地运行的后端，驱动 AI |
+| **一个 LLM API Key** | DeepSeek、Anthropic Claude、Google Gemini、OpenAI 或任何兼容 OpenAI 接口的服务商 |
+| **macOS** | 目前仅支持 macOS。Windows/Linux 的原生消息主机支持在计划中 |
+| **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
+
+无需注册云端账号——所有数据都在你本机。API Key 直连你选的 LLM 服务商。
 
 > **License**: [MIT](./LICENSE).
 
@@ -34,8 +57,7 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 
 ## 安装
 
-> 前提：已经装好 [Hermes Agent](https://github.com/huaqing0/hermes-agent) v0.2.0 及以上版本。启动 gateway 前需设置环境变量 `HERMES_IN_CHROME_BACKEND_PATH` 指向本仓库的 `backend/` 目录，例如：
->
+> **开始前确认**：Hermes Agent v0.2.0+ 已在 `127.0.0.1:8642` 运行，并设置 `HERMES_IN_CHROME_BACKEND_PATH`：
 > ```bash
 > export HERMES_IN_CHROME_BACKEND_PATH=/path/to/hermes-in-chrome/backend
 > hermes gateway run

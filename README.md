@@ -1,13 +1,36 @@
-# Hermes in chrome
-
-> Hermes Agent lives in your Chrome sidebar — an AI browser automation extension.
-> Inspired by Claude in Chrome v1.0.70, talks to a local [Hermes Agent](https://github.com/huaqing0/hermes-agent) over `ws://127.0.0.1:8642`.
-
-[中文版 →](./README.zh.md)
+# Hermes in Chrome
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
+
+> An AI agent that lives in your Chrome sidebar — it can browse the web, read pages, click buttons, fill forms, take screenshots, and save files. You talk to it like you'd talk to a smart colleague who can see and control your browser.
+>
+> [中文版 →](./README.zh.md)
+
+![Hermes sidepanel](docs/sidepanel.png)
+
+## What it does
+
+Ask the agent to do browser work for you:
+
+- **Research**: "Find the top 3 papers on LLM evals published this month and summarize each."
+- **Automation**: "Go to my GitHub issues, open the first 5, and save them as markdown files."
+- **Data extraction**: "Scrape the product listings from this page into a CSV."
+- **Web interaction**: "Log in to this dashboard, download the latest report, and email it to me."
+
+The agent opens its own tab group, reads pages through the accessibility tree, takes real screenshots via Chrome DevTools Protocol, and types/clicks like a real user — all while you keep working in your own tabs.
+
+## What you need
+
+| Requirement | Where to get it |
+|-------------|----------------|
+| **Hermes Agent** v0.2.0+ | [github.com/huaqing0/hermes-agent](https://github.com/huaqing0/hermes-agent) — the backend that runs locally and powers the AI |
+| **An LLM API key** | DeepSeek, Anthropic Claude, Google Gemini, OpenAI, or any OpenAI-compatible provider |
+| **macOS** | Currently macOS-only. Windows/Linux native-messaging support is on the roadmap |
+| **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
+
+No cloud account required — everything runs on your machine. Your API key talks directly to your chosen LLM provider.
 
 > **License**: [MIT](./LICENSE).
 
@@ -32,24 +55,19 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 
 ## Install
 
-> **Prerequisite**: install [Hermes Agent](https://github.com/huaqing0/hermes-agent) v0.2.0 or later. The agent must be running on `ws://127.0.0.1:8642` and the `browser-ext` toolset must be enabled. Set `HERMES_IN_CHROME_BACKEND_PATH` to this repo's `backend/` directory before starting the gateway, e.g.:
->
+> **Before you start**: Make sure you have [Hermes Agent](https://github.com/huaqing0/hermes-agent) v0.2.0+ running on `127.0.0.1:8642`, and set `HERMES_IN_CHROME_BACKEND_PATH`:
 > ```bash
 > export HERMES_IN_CHROME_BACKEND_PATH=/path/to/hermes-in-chrome/backend
 > hermes gateway run
 > ```
->
-> **Platform**: currently only macOS is fully supported. Windows / Linux native-host install is on the roadmap.
 
 ### Quick start (no dev tools needed)
 
-1. Go to [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) → download the latest `hermes-in-chrome.zip`
+1. Go to [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) → download `hermes-in-chrome.zip`
 2. Unzip → open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick the unzipped folder
-3. Press `Cmd+H` (Mac) to open the sidepanel → follow the status bar prompts
+3. Press `Cmd+H` to open the sidepanel → follow the status bar prompts
 
 ### Dev install (for contributors)
-
-Three steps:
 
 1. **Clone + build**:
 
