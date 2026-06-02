@@ -19,6 +19,8 @@
 2. **实时感知页面** — 每次 action 后 agent 主动 `read_page` 拿 a11y tree
 3. **自主开 tab** — 在专属 Hermes Tab Group 里串/并行调研，不打扰用户
 
+![Hermes sidepanel](docs/sidepanel.png)
+
 ## 架构
 
 ```

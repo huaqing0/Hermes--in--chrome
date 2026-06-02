@@ -11,6 +11,8 @@
 
 > **License**: [MIT](./LICENSE).
 
+![Hermes sidepanel](docs/sidepanel.png)
+
 ## Three core capabilities
 
 1. **Lives in the page** — a persistent Chrome sidepanel with streaming AI replies
