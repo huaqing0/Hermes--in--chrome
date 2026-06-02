@@ -1,6 +1,5 @@
-// Hermes 无障碍树生成器
-// fork 自 Claude in Chrome 1.0.70 的 accessibility-tree.js
-// 改名：__claudeElementMap → __hermesElementMap，__generateAccessibilityTree → __hermesGenerateA11yTree
+// Hermes accessibility tree generator — original implementation for MIT release.
+// Produces a structured text representation of the page DOM for agent consumption.
 
 declare global {
   interface Window {
@@ -21,19 +20,19 @@ interface A11yTreeResult {
   error?: string;
 }
 
-// 顺便注入 console hook（不依赖 a11y-tree 单独检查，独立 IIFE）
-(function () {
+// Console buffer hook — captures console output in the isolated world for debugging.
+(function installConsoleHook() {
   const w = window as any;
   if (w.__hermesConsoleHooked) return;
   w.__hermesConsoleHooked = true;
   w.__hermesConsoleBuffer = [];
-  const orig: Record<string, (...a: unknown[]) => void> = {};
-  for (const lvl of ['log', 'info', 'warn', 'error', 'debug'] as const) {
-    orig[lvl] = (console as any)[lvl].bind(console);
-    (console as any)[lvl] = (...args: unknown[]) => {
+  const methods = ['log', 'info', 'warn', 'error', 'debug'] as const;
+  for (const level of methods) {
+    const original = (console as any)[level].bind(console);
+    (console as any)[level] = (...args: unknown[]) => {
       try {
         w.__hermesConsoleBuffer.push({
-          level: lvl,
+          level,
           time: Date.now(),
           message: args
             .map((a) => {
@@ -47,246 +46,323 @@ interface A11yTreeResult {
             .slice(0, 500),
         });
         if (w.__hermesConsoleBuffer.length > 200) w.__hermesConsoleBuffer.shift();
-      } catch {}
-      orig[lvl](...args);
+      } catch { /* best-effort */ }
+      original(...args);
     };
   }
 })();
 
-(function () {
-  if (window.__hermesElementMap) return; // 已注入
+(function buildA11yTree() {
+  if (window.__hermesElementMap) return;
 
-  window.__hermesElementMap = window.__hermesElementMap || {};
-  window.__hermesRefCounter = window.__hermesRefCounter || 0;
+  window.__hermesElementMap = {};
+  window.__hermesRefCounter = 0;
 
-  const SENSITIVE_AUTOCOMPLETE = [
+  // ---- constants ----
+
+  const AUTOFILL_SENSITIVE = new Set([
     'current-password', 'new-password', 'one-time-code',
     'cc-number', 'cc-csc', 'cc-exp', 'cc-exp-month', 'cc-exp-year',
-  ];
+  ]);
 
-  const ROLE_BY_TAG: Record<string, string> = {
-    a: 'link', button: 'button',
-    h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading',
-    img: 'image', nav: 'navigation', main: 'main', header: 'banner', footer: 'contentinfo',
-    section: 'region', article: 'article', aside: 'complementary', form: 'form',
-    table: 'table', ul: 'list', ol: 'list', li: 'listitem', label: 'label',
-    select: 'combobox', textarea: 'textbox',
+  const TAG_TO_IMPLICIT_ROLE: Record<string, string> = {
+    a: 'link',          button: 'button',
+    h1: 'heading',      h2: 'heading',      h3: 'heading',
+    h4: 'heading',      h5: 'heading',      h6: 'heading',
+    img: 'image',       nav: 'navigation',   main: 'main',
+    header: 'banner',   footer: 'contentinfo',
+    section: 'region',  article: 'article',  aside: 'complementary',
+    form: 'form',       table: 'table',
+    ul: 'list',         ol: 'list',          li: 'listitem',
+    label: 'label',     select: 'combobox',  textarea: 'textbox',
   };
 
-  function inferRole(el: Element): string {
+  const SKIP_TAGS = new Set(['script', 'style', 'meta', 'link', 'title', 'noscript']);
+
+  // ---- helpers ----
+
+  function classifyRole(el: Element): string {
     const explicit = el.getAttribute('role');
-    if (explicit) return explicit;
+    if (explicit) return explicit.trim().toLowerCase();
+
     const tag = el.tagName.toLowerCase();
+
     if (tag === 'input') {
-      const t = (el.getAttribute('type') || '').toLowerCase();
-      if (t === 'submit' || t === 'button' || t === 'file') return 'button';
-      if (t === 'checkbox') return 'checkbox';
-      if (t === 'radio') return 'radio';
+      const inputType = (el.getAttribute('type') || 'text').toLowerCase();
+      if (inputType === 'submit' || inputType === 'button' || inputType === 'file') return 'button';
+      if (inputType === 'checkbox') return 'checkbox';
+      if (inputType === 'radio') return 'radio';
       return 'textbox';
     }
-    return ROLE_BY_TAG[tag] || 'generic';
+
+    const cedit = el.getAttribute('contenteditable');
+    if (cedit === 'true' || cedit === 'plaintext-only') return 'textbox';
+
+    return TAG_TO_IMPLICIT_ROLE[tag] || 'generic';
   }
 
-  function isSensitive(el: Element): boolean {
-    const t = (el.getAttribute('type') || '').toLowerCase();
-    if (t === 'password' || t === 'hidden') return true;
+  function holdsSensitiveData(el: Element): boolean {
+    const inputType = (el.getAttribute('type') || '').toLowerCase();
+    if (inputType === 'password' || inputType === 'hidden') return true;
     const ac = (el.getAttribute('autocomplete') || '').toLowerCase();
-    return SENSITIVE_AUTOCOMPLETE.some((k) => ac.includes(k));
+    return [...AUTOFILL_SENSITIVE].some((k) => ac.includes(k));
   }
 
-  function textContent(el: Element): string {
+  function immediateText(el: Element): string {
     let out = '';
-    for (const node of Array.from(el.childNodes)) {
-      if (node.nodeType === Node.TEXT_NODE) out += node.textContent;
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) out += child.textContent;
     }
     return out.trim();
   }
 
-  function descendantTextContent(el: Element): string {
+  function fullText(el: Element): string {
     return (el.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
-  function getLabel(el: Element): string {
+  function extractLabel(el: Element): string {
     const tag = el.tagName.toLowerCase();
+
+    // <select> — show selected option text
     if (tag === 'select') {
-      if (isSensitive(el)) {
-        return el.getAttribute('aria-label')?.trim()
-          || el.getAttribute('title')?.trim()
-          || (el.id ? textContent(document.querySelector(`label[for="${el.id}"]`) ?? document.createElement('span')) : '')
-          || '[value redacted]';
+      if (holdsSensitiveData(el)) {
+        const aria = el.getAttribute('aria-label')?.trim();
+        const title = el.getAttribute('title')?.trim();
+        const fromFor = el.id ? immediateText(document.querySelector(`label[for="${CSS.escape(el.id)}"]`) ?? document.createElement('span')) : '';
+        return aria || title || fromFor || '[value redacted]';
       }
       const sel = el as HTMLSelectElement;
-      const opt = sel.querySelector('option[selected]') || sel.options[sel.selectedIndex];
-      return opt?.textContent?.trim() || '';
+      const chosen = sel.querySelector('option[selected]') || sel.options[sel.selectedIndex];
+      return chosen?.textContent?.trim() || '';
     }
-    const label =
+
+    // Explicit attributes
+    const attrLabel =
       el.getAttribute('aria-label')?.trim() ||
       el.getAttribute('placeholder')?.trim() ||
       el.getAttribute('title')?.trim() ||
       el.getAttribute('alt')?.trim();
-    if (label) return label;
+    if (attrLabel) return attrLabel;
+
+    // <label for="..."> association
     if (el.id) {
-      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lbl) {
-        const t = descendantTextContent(lbl);
-        if (t) return t;
+      const forLabel = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (forLabel) {
+        const txt = fullText(forLabel);
+        if (txt) return txt;
       }
     }
+
+    // <input> — show current value if short and non-sensitive
     if (tag === 'input') {
       const inp = el as HTMLInputElement;
       const t = (inp.getAttribute('type') || '').toLowerCase();
       if (t === 'submit' && inp.value) return inp.value.trim();
-      if (isSensitive(el)) return inp.value ? '[value redacted]' : '';
+      if (holdsSensitiveData(el)) return inp.value ? '[value redacted]' : '';
       if (inp.value && inp.value.length < 50) return inp.value.trim();
     }
+
+    // <textarea>
     if (tag === 'textarea') {
-      if (isSensitive(el)) return (el as HTMLTextAreaElement).value ? '[value redacted]' : '';
+      if (holdsSensitiveData(el)) return (el as HTMLTextAreaElement).value ? '[value redacted]' : '';
     }
-    if (['button', 'a', 'summary'].includes(tag) || el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link') {
-      const t = descendantTextContent(el);
+
+    // Interactive controls — use full descendant text
+    if (
+      tag === 'button' || tag === 'a' || tag === 'summary' ||
+      el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link'
+    ) {
+      const t = fullText(el);
       if (t) return t;
+      const svgTitle = el.querySelector('svg title,title')?.textContent?.trim();
+      if (svgTitle) return svgTitle;
     }
+
+    // Headings
     if (/^h[1-6]$/.test(tag)) {
       return (el.textContent || '').trim().substring(0, 100);
     }
+
+    // Images don't have a useful label beyond alt (already checked above)
     if (tag === 'img') return '';
-    const t = textContent(el);
-    if (t.length >= 3) return t.length > 100 ? t.substring(0, 100) + '...' : t;
+
+    const direct = immediateText(el);
+    if (direct.length >= 3) return direct.length > 100 ? direct.substring(0, 100) + '…' : direct;
     return '';
   }
 
-  function isVisible(el: Element): boolean {
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  function isInViewport(el: Element): boolean {
+    const s = window.getComputedStyle(el);
+    if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
     const he = el as HTMLElement;
     return he.offsetWidth > 0 && he.offsetHeight > 0;
   }
 
-  function isInteractive(el: Element): boolean {
+  function canInteract(el: Element): boolean {
     const tag = el.tagName.toLowerCase();
     if (['a', 'button', 'input', 'select', 'textarea', 'details', 'summary'].includes(tag)) return true;
-    if (el.hasAttribute('onclick')) return true;
-    if (el.hasAttribute('tabindex')) return true;
+    if (el.hasAttribute('onclick') || el.hasAttribute('tabindex')) return true;
     const role = el.getAttribute('role');
-    if (role === 'button' || role === 'link') return true;
-    if (el.getAttribute('contenteditable') === 'true') return true;
+    if (role && [
+      'button',
+      'link',
+      'textbox',
+      'checkbox',
+      'radio',
+      'combobox',
+      'switch',
+      'menuitem',
+      'option',
+      'tab',
+    ].includes(role.trim().toLowerCase())) return true;
+    const editable = el.getAttribute('contenteditable');
+    if (editable === 'true' || editable === 'plaintext-only') return true;
+    try {
+      const s = window.getComputedStyle(el as HTMLElement);
+      if (s.cursor === 'pointer' && !!el.querySelector('svg,path')) return true;
+    } catch { /* best-effort */ }
     return false;
   }
 
-  function isSemantic(el: Element): boolean {
+  function hasSemanticMeaning(el: Element): boolean {
     const tag = el.tagName.toLowerCase();
     return /^(h[1-6]|nav|main|header|footer|section|article|aside)$/.test(tag) || el.hasAttribute('role');
   }
 
-  function shouldInclude(el: Element, opts: { filter: string; refId: string | null }): boolean {
-    const tag = el.tagName.toLowerCase();
-    if (['script', 'style', 'meta', 'link', 'title', 'noscript'].includes(tag)) return false;
-    if (opts.filter !== 'all' && el.getAttribute('aria-hidden') === 'true') return false;
-    if (opts.filter !== 'all' && !isVisible(el)) return false;
-    if (opts.filter !== 'all' && !opts.refId) {
+  function elementIsWorthShowing(el: Element, filter: string, isSubtreeWalk: boolean): boolean {
+    if (SKIP_TAGS.has(el.tagName.toLowerCase())) return false;
+    if (filter !== 'all' && el.getAttribute('aria-hidden') === 'true') return false;
+    if (filter !== 'all' && !isInViewport(el)) return false;
+    // Viewport culling: skip elements outside visible area (unless walking a specific subtree)
+    if (filter !== 'all' && !isSubtreeWalk) {
       const r = el.getBoundingClientRect();
       if (!(r.top < window.innerHeight && r.bottom > 0 && r.left < window.innerWidth && r.right > 0)) return false;
     }
-    if (opts.filter === 'interactive') return isInteractive(el);
-    if (isInteractive(el) || isSemantic(el)) return true;
-    if (getLabel(el).length > 0) return true;
-    const role = inferRole(el);
+    if (filter === 'interactive') return canInteract(el);
+    if (canInteract(el) || hasSemanticMeaning(el)) return true;
+    if (extractLabel(el).length > 0) return true;
+    const role = classifyRole(el);
     return role !== 'generic' && role !== 'image';
   }
 
+  function getOrCreateRef(el: Element): string {
+    for (const key in window.__hermesElementMap) {
+      if (window.__hermesElementMap[key].deref() === el) return key;
+    }
+    const newRef = 'ref_' + (++window.__hermesRefCounter);
+    window.__hermesElementMap[newRef] = new WeakRef(el);
+    return newRef;
+  }
+
+  // ---- main tree builder ----
+
   window.__hermesGenerateA11yTree = function (filter, maxDepth, maxChars, refId) {
     try {
-      const lines: string[] = [];
-      const depth = maxDepth ?? 15;
-      const opts = { filter: filter ?? 'all', refId: refId ?? null };
+      const outputLines: string[] = [];
+      const depthLimit = maxDepth ?? 15;
+      const mode = filter ?? 'all';
+      const subtreeOnly = refId != null;
 
-      function findOrAssignRef(el: Element): string {
-        for (const k in window.__hermesElementMap) {
-          if (window.__hermesElementMap[k].deref() === el) return k;
-        }
-        const ref = 'ref_' + ++window.__hermesRefCounter;
-        window.__hermesElementMap[ref] = new WeakRef(el);
-        return ref;
-      }
+      function walkNode(el: Element, indent: number) {
+        if (indent > depthLimit || !el || !el.tagName) return;
 
-      function walk(el: Element, level: number) {
-        if (level > depth || !el || !el.tagName) return;
-        const include = shouldInclude(el, opts) || (opts.refId !== null && level === 0);
-        if (include) {
-          const role = inferRole(el);
-          let label = getLabel(el);
-          const ref = findOrAssignRef(el);
-          let line = ' '.repeat(level) + role;
+        const visible = elementIsWorthShowing(el, mode, subtreeOnly);
+        // When walking a subtree, always include the root element even if it normally wouldn't be shown
+        const includeThis = visible || (subtreeOnly && indent === 0);
+
+        if (includeThis) {
+          const role = classifyRole(el);
+          let label = extractLabel(el);
+          const ref = getOrCreateRef(el);
+
+          let line = ' '.repeat(indent) + role;
           if (label) {
             label = label.replace(/\s+/g, ' ').substring(0, 100);
-            line += ` "${label.replace(/"/g, '\\"')}"`;
+            line += ' "' + label.replace(/"/g, '\\"') + '"';
           }
-          line += ` [${ref}]`;
+          line += ' [' + ref + ']';
+
           const href = el.getAttribute('href');
-          if (href) line += ` href="${href}"`;
-          const type = el.getAttribute('type');
-          if (type) line += ` type="${type}"`;
-          const ph = el.getAttribute('placeholder');
-          if (ph) line += ` placeholder="${ph}"`;
-          lines.push(line);
-          if (el.tagName.toLowerCase() === 'select' && !isSensitive(el)) {
+          if (href) line += ' href="' + href + '"';
+          const typeAttr = el.getAttribute('type');
+          if (typeAttr) line += ' type="' + typeAttr + '"';
+          const placeholder = el.getAttribute('placeholder');
+          if (placeholder) line += ' placeholder="' + placeholder + '"';
+
+          outputLines.push(line);
+
+          // Inline <select> options
+          if (el.tagName.toLowerCase() === 'select' && !holdsSensitiveData(el)) {
             for (const opt of Array.from((el as HTMLSelectElement).options)) {
-              let oline = ' '.repeat(level + 1) + 'option';
-              const t = opt.textContent?.trim() || '';
-              if (t) oline += ` "${t.replace(/"/g, '\\"').substring(0, 100)}"`;
-              if (opt.selected) oline += ' (selected)';
-              if (opt.value && opt.value !== t) oline += ` value="${opt.value.replace(/"/g, '\\"')}"`;
-              lines.push(oline);
+              let optLine = ' '.repeat(indent + 1) + 'option';
+              const optText = opt.textContent?.trim() || '';
+              if (optText) optLine += ' "' + optText.replace(/"/g, '\\"').substring(0, 100) + '"';
+              if (opt.selected) optLine += ' (selected)';
+              if (opt.value && opt.value !== optText) optLine += ' value="' + opt.value.replace(/"/g, '\\"') + '"';
+              outputLines.push(optLine);
             }
           }
         }
-        if (el.tagName.toLowerCase() === 'select' && !isSensitive(el)) return;
-        if (el.children && level < depth) {
+
+        // Don't recurse into <select> (options already rendered inline)
+        if (el.tagName.toLowerCase() === 'select' && !holdsSensitiveData(el)) return;
+
+        if (el.children && indent < depthLimit) {
+          const nextIndent = includeThis ? indent + 1 : indent;
           for (const child of Array.from(el.children)) {
-            walk(child, include ? level + 1 : level);
+            walkNode(child, nextIndent);
+          }
+          const shadow = (el as HTMLElement).shadowRoot;
+          if (shadow) {
+            for (const child of Array.from(shadow.children)) {
+              walkNode(child, nextIndent);
+            }
           }
         }
       }
 
+      // Resolve starting point
       let root: Element | null = document.body;
       if (refId) {
-        const ref = window.__hermesElementMap[refId];
-        if (!ref) {
+        const entry = window.__hermesElementMap[refId];
+        if (!entry) {
           return {
-            error: `ref_id '${refId}' 不存在或已 GC`,
+            error: 'ref_id \'' + refId + '\' does not exist or was garbage collected',
             pageContent: '',
             viewport: { width: window.innerWidth, height: window.innerHeight },
           };
         }
-        const node = ref.deref();
-        if (!node) {
+        const el = entry.deref();
+        if (!el) {
           return {
-            error: `ref_id '${refId}' 已被移除`,
+            error: 'ref_id \'' + refId + '\' has been removed from the DOM',
             pageContent: '',
             viewport: { width: window.innerWidth, height: window.innerHeight },
           };
         }
-        root = node;
-      }
-      if (root) walk(root, 0);
-
-      // 清理失效 WeakRef
-      for (const k in window.__hermesElementMap) {
-        if (!window.__hermesElementMap[k].deref()) delete window.__hermesElementMap[k];
+        root = el;
       }
 
-      const out = lines.join('\n');
-      if (maxChars != null && out.length > maxChars) {
+      if (root) walkNode(root, 0);
+
+      // Garbage-collect dead WeakRefs
+      for (const key in window.__hermesElementMap) {
+        if (!window.__hermesElementMap[key].deref()) delete window.__hermesElementMap[key];
+      }
+
+      const result = outputLines.join('\n');
+      if (maxChars != null && result.length > maxChars) {
         return {
-          error: `输出超过 ${maxChars} 字符 (实际 ${out.length})，请减小 depth 或用 ref_id 聚焦`,
+          error: 'Output exceeds ' + maxChars + ' characters (actual ' + result.length + '); reduce depth or use ref_id to narrow scope',
           pageContent: '',
           viewport: { width: window.innerWidth, height: window.innerHeight },
         };
       }
-      return { pageContent: out, viewport: { width: window.innerWidth, height: window.innerHeight } };
+
+      return { pageContent: result, viewport: { width: window.innerWidth, height: window.innerHeight } };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'unknown';
-      throw new Error('生成 a11y 树失败: ' + msg);
+      const msg = e instanceof Error ? e.message : 'unknown error';
+      throw new Error('Failed to build accessibility tree: ' + msg);
     }
   };
 })();

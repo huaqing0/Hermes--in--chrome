@@ -48,6 +48,13 @@
     },
     {
       "matches": ["<all_urls>"],
+      "js": ["src/content/console-hook.ts"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": ["src/content/visual-indicator.ts"],
       "run_at": "document_idle",
       "all_frames": false

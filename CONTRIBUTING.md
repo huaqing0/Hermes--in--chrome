@@ -46,6 +46,6 @@ Useful info to include:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE) of this project.
+By contributing, you agree that your contributions will be licensed under the [MIT License](./LICENSE) of this project.
 
 If you want to make a contribution that should be available under a more permissive license, mention it in your PR and we'll discuss.

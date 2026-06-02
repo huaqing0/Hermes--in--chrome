@@ -5,25 +5,11 @@
 
 [中文版 →](./README.zh.md)
 
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-blue.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
 
-> **License**: source-available under [PolyForm Noncommercial 1.0.0](./LICENSE).
-> Free for personal / educational / non-profit use.
-> **Commercial use** requires a separate license — see [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md).
-
-<!-- TODO: replace with real screenshots/GIFs once recorded.
-     Suggested order:
-       1. Sidebar in CP2077 theme — initial state with onboarding bar
-       2. Sidebar in Synthwave theme — mid-conversation with a tool call
-       3. Animated GIF: open sidepanel → type "find latest AI news" → watch
-          agent open a tab, read the a11y tree, stream the reply
--->
-
-![Screenshot placeholder](./docs/screenshot-placeholder.png)
-
----
+> **License**: [MIT](./LICENSE).
 
 ## Three core capabilities
 
@@ -44,7 +30,12 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 
 ## Install
 
-> **Prerequisite**: install [Hermes Agent](https://github.com/huaqing0/hermes-agent) first (default location `~/.hermes/hermes-agent/`).
+> **Prerequisite**: install [Hermes Agent](https://github.com/huaqing0/hermes-agent) v0.2.0 or later. The agent must be running on `ws://127.0.0.1:8642` and the `browser-ext` toolset must be enabled. Set `HERMES_IN_CHROME_BACKEND_PATH` to this repo's `backend/` directory before starting the gateway, e.g.:
+>
+> ```bash
+> export HERMES_IN_CHROME_BACKEND_PATH=/path/to/hermes-in-chrome/backend
+> hermes gateway run
+> ```
 >
 > **Platform**: currently only macOS is fully supported. Windows / Linux native-host install is on the roadmap.
 
@@ -129,12 +120,13 @@ Works with Ollama, vLLM, LM Studio, any private OpenAI-compatible gateway: pick 
 
 Core browser tools:
 
-`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `screenshot` · `wait` · `browser_batch` · `get_console_logs` · `save_to_local` · `extract_markdown`
+`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `hover` · `right_click` · `double_click` · `drag` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `close_tab` · `screenshot` · `visual_inspect` · `wait` · `browser_batch` · `get_console_logs` · `read_network_requests` · `save_to_local` · `extract_markdown`
 
 - `read_page` and `ref_id` operations run via `chrome.scripting.executeScript`'s **isolated world** so the a11y tree is never exposed to the page's main world
 - `browser_batch` collapses predictable consecutive actions to cut tool-call round-trips
 - `key` supports combos like `Meta+Enter` for keyboard-submit on X / Twitter
-- `type` uses the clipboard temporarily for rich-text fields on X / YouTube etc., and restores the clipboard afterwards. If only plain-text restore is possible, the result includes `clipboard_restore_mode`
+- `type` uses the clipboard temporarily for rich-text fields on X / YouTube etc., and restores the clipboard afterwards. If restore has to downgrade to plain text or fails, the result includes `clipboard_restore_mode`
+- `visual_inspect` routes a page screenshot through a real vision channel: vision-capable GPT / Claude / Gemini models receive the image natively; text-only models use Hermes `auxiliary.vision` and receive a short text analysis.
 - `save_to_local` writes any text/binary content anywhere the user has filesystem permission (except system paths and sensitive user dirs — see [Save scraped content locally](#save-scraped-content-locally-native-messaging) below); needs a one-time install. `extract_markdown` turns the current Chrome page into Markdown — typical pair with `save_to_local` for "scrape page + persist".
 
 ## Save scraped content locally (Native Messaging)
@@ -161,7 +153,8 @@ What this does:
 
 - Host accepts absolute paths and expands `~`. Writes are allowed anywhere on the user filesystem **except** system paths (`/System`, `/usr`, `/etc`, `/Library/Apple`, etc.) and sensitive user dirs (`~/.ssh`, `~/.aws`, `~/.gnupg`, browser profiles, `~/.zshrc` and other shell rc files). This blocks prompt-injection attempts to steal credentials or hijack a shell.
 - Refuses to overwrite existing files unless the tool call explicitly passes `overwrite=true`
-- Max 64 MB per write
+- Native Messaging request envelope is capped at 64 MiB; base64 binary payloads must account for encoding overhead when computing total size.
+- Host responses stay tiny and below Chrome's 1 MiB native-host-to-extension limit.
 - Log at `~/.hermes/logs/hermes-filewriter.log`
 
 **Typical use**:
@@ -176,7 +169,7 @@ ext_screenshot()                      # returns base64
 
 ## Privacy & Permissions
 
-This extension is **local-first**. Nothing in the conversation, the page DOM, screenshots, or your API keys is sent to anywhere other than `127.0.0.1:8642` (your local Hermes Agent). Your LLM provider of choice receives only what the Hermes backend explicitly relays.
+This extension is **local-first**. Nothing in the conversation, the page DOM, screenshots, or your API keys is sent to anywhere other than `127.0.0.1:8642` (your local Hermes Agent). Your LLM provider of choice receives only what the Hermes backend explicitly relays. `visual_inspect` sends screenshots to the active vision provider or your configured Hermes `auxiliary.vision` provider.
 
 The MV3 manifest requests these permissions, each for a specific reason:
 
@@ -191,7 +184,7 @@ The MV3 manifest requests these permissions, each for a specific reason:
 | `webNavigation` | Detect when an agent-driven page finishes loading before reading it |
 | `alarms`, `offscreen` | Keep the service worker alive for in-flight LLM streams; the offscreen document hosts clipboard read/write for rich-text input |
 | `notifications` | Surface long-running task completion / errors |
-| `clipboardRead`, `clipboardWrite` | Snapshot your clipboard before pasting rich text into X / YouTube etc., then restore it. **Clipboard contents are never sent off-device.** When full snapshot/restore isn't supported the result is marked `clipboard_restore_mode: 'text'` |
+| `clipboardRead`, `clipboardWrite` | Snapshot your clipboard before pasting rich text into X / YouTube etc., then restore it. **Clipboard contents are never sent off-device.** When full snapshot/restore isn't supported the result is marked `clipboard_restore_mode: 'text'`; if restore fails it is marked `clipboard_restore_mode: 'failed'` |
 | `nativeMessaging` | Talk to `hermes-filewriter` (a separate Python process) to persist files locally. Without this `save_to_local` is unavailable |
 | `host_permissions: <all_urls>` | The agent needs to operate on any URL you point it at; we can't predict in advance which sites you'll use |
 
@@ -210,6 +203,23 @@ What we do **not** do:
 - The 5 provider handlers (`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`) and the browser tool bridge need to be registered inside Hermes Agent
 - The extension itself **cannot** spawn local Python processes; run `npm run backend:ensure` from your terminal, or `npm run backend:watch` for a foreground watchdog
 - We only ask for `clipboardRead` / `clipboardWrite` for local rich-text input (snapshot original → write payload → restore). Clipboard contents are never sent to a remote service.
+
+### Hermes Agent bridge requirement
+
+The extension's browser tools (`click`, `type`, `read_page`, etc.) rely on a Python bridge (`backend/browser_extension_tools.py`) that must be importable by the Hermes Agent gateway. The built-in launcher (`npm run backend:ensure`) sets `HERMES_IN_CHROME_BACKEND_PATH` automatically.
+
+**Verify the bridge is working:**
+
+```bash
+npm run check-bridge
+```
+
+This checks that:
+- The Hermes gateway is healthy at `http://127.0.0.1:8642/health`
+- `HERMES_IN_CHROME_BACKEND_PATH` points to a directory containing `browser_extension_tools.py`
+- The gateway log confirms the bridge was loaded without errors
+
+If the check fails, re-run `npm run backend:ensure` — it passes the correct path to the gateway automatically.
 
 ### WebSocket protocol contract
 
@@ -236,9 +246,7 @@ _locales/             # Chrome i18n messages (manifest name/description)
 
 ## License
 
-[PolyForm Noncommercial License 1.0.0](./LICENSE)
-
-Commercial use: see [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md).
+[MIT](./LICENSE)
 
 Contributions: see [CONTRIBUTING.md](./CONTRIBUTING.md).
 

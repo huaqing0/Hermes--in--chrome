@@ -19,10 +19,59 @@ type TypeResult = {
   strategy: string;
   target_kind: string;
   scope_kind: string;
-  submit_button_disabled: false;
+  submit_button_disabled: boolean;
   actual_text_preview: string;
+  tabId?: number;
+  url?: string;
+  title?: string;
+  submit_method?: string;
+  submit_button_ref?: string;
+  submit_button_label?: string;
+  post_submit_text_still_present?: boolean;
+  candidate_submit_buttons?: SubmitCandidate[];
+  attempted_submit_buttons?: SubmitCandidate[];
   clipboard_restore_mode?: 'full' | 'text' | 'failed';
   clipboard_restore_error?: string;
+};
+type TabContext = { tabId: number; url: string; title: string; status?: string };
+type RectInfo = { x: number; y: number; width: number; height: number };
+type DomTarget = {
+  ref_id: string;
+  kind: 'editable' | 'clickable';
+  tag: string;
+  role: string;
+  label: string;
+  text: string;
+  placeholder: string;
+  rect: RectInfo;
+  disabled?: boolean;
+  hasSvg?: boolean;
+  nearestEditableRef?: string;
+  nearestEditableDistance?: number;
+  notes?: string[];
+};
+type SubmitCandidate = {
+  ref_id: string;
+  label: string;
+  tag: string;
+  role: string;
+  score: number;
+  x: number;
+  y: number;
+  disabled?: boolean;
+  hasSvg?: boolean;
+  same_row?: boolean;
+  right_of_editor?: boolean;
+  distance?: number;
+};
+type SubmitAttempt = {
+  submitted: boolean;
+  method: string;
+  button?: SubmitCandidate;
+  candidates: SubmitCandidate[];
+  attempted_buttons?: SubmitCandidate[];
+  post_submit_text_still_present?: boolean;
+  post_submit_text_preview?: string;
 };
 type EditableStatus = {
   ok: boolean;
@@ -57,6 +106,38 @@ type DraftInspection = {
   residue_preview: string;
   tried: string[];
   error?: string;
+};
+type VisualInspectArgs = {
+  question?: string;
+  ref_id?: string;
+  scope?: 'viewport' | 'element';
+};
+type NetworkArgs = {
+  tabId?: number;
+  limit?: number;
+  filter?: string;
+  includeHeaders?: boolean;
+  includeFailed?: boolean;
+  includeBody?: boolean;
+};
+type HoverArgs = {
+  tabId?: number;
+  x?: number;
+  y?: number;
+  ref_id?: string;
+};
+type DragArgs = {
+  tabId?: number;
+  from_ref_id?: string;
+  to_ref_id?: string;
+  from_x?: number;
+  from_y?: number;
+  to_x?: number;
+  to_y?: number;
+};
+type CloseTabArgs = {
+  tabId?: number;
+  force?: boolean;
 };
 
 /** 把 session 绑定到一个 tab（首次发消息时调用） */
@@ -94,7 +175,7 @@ async function markRichTextDirty(tabId: number, sessionId: string, reason: strin
 }
 
 function richTextDirtyError(dirty: { reason: string }): string {
-  return `Previous rich-text input failed; the page may still have hidden X/YouTube draft residue. Further input/submit is blocked — refresh the page or reopen the compose dialog and retry. Reason: ${dirty.reason}`;
+  return `Previous rich-text input failed; the page may still have hidden X/YouTube draft residue. Further input/submit is blocked. To recover, call navigate(url=<current url>) or close+reopen the tab — the lock auto-clears on page load. Reason: ${dirty.reason}`;
 }
 
 async function getCurrentTab(sessionId: string): Promise<number> {
@@ -106,6 +187,16 @@ async function getCurrentTab(sessionId: string): Promise<number> {
   } catch {
     throw new Error(`Session ${sessionId} tab ${state.currentTabId} has been closed`);
   }
+}
+
+async function getTabContext(tabId: number): Promise<TabContext> {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  return {
+    tabId,
+    url: tab?.url || '',
+    title: tab?.title || '',
+    status: tab?.status,
+  };
 }
 
 // === a11y-tree 注入辅助 ===
@@ -122,12 +213,13 @@ async function ensureA11yInjected(tabId: number): Promise<void> {
   }
 }
 
-async function runInPage<T>(tabId: number, func: (...args: any[]) => T, args: unknown[] = []): Promise<T> {
+async function runInPage<T>(tabId: number, func: (...args: any[]) => T, args: unknown[] = [], world: chrome.scripting.ExecutionWorld = 'ISOLATED'): Promise<T> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     injectImmediately: true,
     func,
     args,
+    world,
   });
   if (!results.length) throw new Error('Page script returned no result');
   return results[0].result as T;
@@ -278,6 +370,287 @@ async function readPage(sessionId: string, args: { ref_id?: string; depth?: numb
   };
 }
 
+async function scanInteractiveTargets(tabId: number, limit = 60): Promise<{ editables: DomTarget[]; clickables: DomTarget[]; active?: DomTarget | null; viewport: { width: number; height: number } }> {
+  await ensureA11yInjected(tabId);
+  return runInPage(
+    tabId,
+    (maxItems) => {
+      type PageRect = { x: number; y: number; width: number; height: number };
+      type PageTarget = {
+        ref_id: string;
+        kind: 'editable' | 'clickable';
+        tag: string;
+        role: string;
+        label: string;
+        text: string;
+        placeholder: string;
+        rect: PageRect;
+        disabled?: boolean;
+        hasSvg?: boolean;
+        nearestEditableRef?: string;
+        nearestEditableDistance?: number;
+        notes?: string[];
+      };
+
+      const w = window as any;
+      if (!w.__hermesElementMap) w.__hermesElementMap = {};
+      if (!w.__hermesRefCounter) w.__hermesRefCounter = 0;
+
+      function getOrCreateRef(el: Element): string {
+        for (const key in w.__hermesElementMap) {
+          if (w.__hermesElementMap[key]?.deref?.() === el) return key;
+        }
+        const ref = `ref_${++w.__hermesRefCounter}`;
+        w.__hermesElementMap[ref] = new WeakRef(el);
+        return ref;
+      }
+
+      function roleOf(el: Element): string {
+        const explicit = el.getAttribute('role');
+        if (explicit) return explicit.trim().toLowerCase();
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'button') return 'button';
+        if (tag === 'a') return 'link';
+        if (tag === 'textarea') return 'textbox';
+        if (tag === 'select') return 'combobox';
+        if (tag === 'input') {
+          const type = (el.getAttribute('type') || 'text').toLowerCase();
+          if (['button', 'submit', 'file'].includes(type)) return 'button';
+          if (type === 'checkbox') return 'checkbox';
+          if (type === 'radio') return 'radio';
+          return 'textbox';
+        }
+        const editable = el.getAttribute('contenteditable');
+        if (editable === 'true' || editable === 'plaintext-only') return 'textbox';
+        return 'generic';
+      }
+
+      function rectOf(el: Element): PageRect {
+        const r = el.getBoundingClientRect();
+        return {
+          x: Math.round(r.left + r.width / 2),
+          y: Math.round(r.top + r.height / 2),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        };
+      }
+
+      function isVisible(el: Element): boolean {
+        const r = el.getBoundingClientRect();
+        const s = window.getComputedStyle(el as HTMLElement);
+        return r.width > 0
+          && r.height > 0
+          && r.bottom > 0
+          && r.right > 0
+          && r.top < window.innerHeight
+          && r.left < window.innerWidth
+          && s.display !== 'none'
+          && s.visibility !== 'hidden'
+          && parseFloat(s.opacity || '1') > 0.05;
+      }
+
+      function elementText(el: Element): string {
+        return ((el as HTMLInputElement).value || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      }
+
+      function labelOf(el: Element): string {
+        const svgTitle = el.querySelector('svg title,title')?.textContent?.trim();
+        return [
+          el.getAttribute('aria-label'),
+          el.getAttribute('title'),
+          el.getAttribute('placeholder'),
+          el.getAttribute('alt'),
+          svgTitle,
+          elementText(el),
+        ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+      }
+
+      function elementContextSignature(el: Element): string {
+        const parts: string[] = [];
+        let node: Element | null = el;
+        for (let depth = 0; node && node !== document.body && depth < 7; depth += 1) {
+          const html = node as HTMLElement;
+          const className = typeof html.className === 'string' ? html.className : '';
+          parts.push(
+            node.tagName,
+            node.id || '',
+            className,
+            node.getAttribute('role') || '',
+            node.getAttribute('aria-label') || '',
+            node.getAttribute('title') || '',
+            node.getAttribute('placeholder') || '',
+            node.getAttribute('aria-placeholder') || '',
+            node.getAttribute('data-e2e') || '',
+            node.getAttribute('data-testid') || '',
+            node.getAttribute('data-test-id') || '',
+          );
+          if (depth <= 2) parts.push((node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180));
+          node = node.parentElement;
+        }
+        return parts.filter(Boolean).join(' ').toLowerCase();
+      }
+
+      function isBulletScreenControl(el: Element): boolean {
+        const host = location.hostname.toLowerCase();
+        if (!/(^|\.)douyin\.com$|(^|\.)bilibili\.com$|(^|\.)b23\.tv$/.test(host)) return false;
+        const signature = elementContextSignature(el);
+        const ownText = [
+          labelOf(el),
+          el.getAttribute('placeholder'),
+          el.getAttribute('aria-placeholder'),
+          elementText(el),
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (/(弹幕|发弹幕|发送弹幕|danmu|danmaku|barrage|bullet[-_ ]?screen)/i.test(signature)) return true;
+        const playerLike = /(xgplayer|bpx[-_]?player|bilibili[-_]?player|web[-_]?player|video[-_]?controls?|controlbar|controller|播放器)/i.test(signature);
+        const commentLike = /(评论|回复|comment|reply)/i.test(ownText);
+        const rect = el.getBoundingClientRect();
+        return playerLike && !commentLike && rect.top > window.innerHeight * 0.55;
+      }
+
+      function isEditable(el: Element): boolean {
+        if (el instanceof HTMLTextAreaElement) return true;
+        if (el instanceof HTMLInputElement) {
+          const type = (el.getAttribute('type') || 'text').toLowerCase();
+          return !['hidden', 'button', 'submit', 'checkbox', 'radio', 'file', 'range', 'color'].includes(type);
+        }
+        if (el instanceof HTMLElement && el.isContentEditable) return true;
+        return el.getAttribute('role') === 'textbox';
+      }
+
+      function clickableRoot(el: Element): Element | null {
+        if (el.closest('[contenteditable="true"],[contenteditable="plaintext-only"],textarea,input,[role="textbox"]')) return null;
+        return el.closest('button,[role="button"],a,[role="link"],summary,[tabindex]') || el;
+      }
+
+      function isDisabled(el: Element): boolean {
+        const s = window.getComputedStyle(el as HTMLElement);
+        return (el instanceof HTMLButtonElement && el.disabled)
+          || (el instanceof HTMLInputElement && el.disabled)
+          || el.getAttribute('disabled') != null
+          || el.getAttribute('aria-disabled') === 'true'
+          || s.pointerEvents === 'none';
+      }
+
+      function isClickable(el: Element): boolean {
+        const tag = el.tagName.toLowerCase();
+        const role = roleOf(el);
+        const style = window.getComputedStyle(el as HTMLElement);
+        if (['button', 'a', 'summary'].includes(tag)) return true;
+        if (['button', 'link', 'menuitem', 'tab', 'option'].includes(role)) return true;
+        if (el.hasAttribute('tabindex')) return true;
+        if ((el.getAttribute('aria-label') || el.getAttribute('title')) && style.cursor === 'pointer') return true;
+        if (style.cursor === 'pointer' && !!el.querySelector('svg,path')) return true;
+        return false;
+      }
+
+      function collect(root: ParentNode, out: Element[], seen: Set<Element>) {
+        for (const el of Array.from(root.children || [])) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          out.push(el);
+          const shadow = (el as HTMLElement).shadowRoot;
+          if (shadow) collect(shadow, out, seen);
+          collect(el, out, seen);
+        }
+      }
+
+      function distance(a: PageRect, b: PageRect): number {
+        return Math.round(Math.hypot(a.x - b.x, a.y - b.y));
+      }
+
+      const all: Element[] = [];
+      collect(document.body, all, new Set<Element>());
+      const editables = all.filter((el) => isEditable(el) && isVisible(el));
+      const editableTargets: PageTarget[] = editables.map((el) => ({
+        ref_id: getOrCreateRef(el),
+        kind: 'editable',
+        tag: el.tagName.toLowerCase(),
+        role: roleOf(el),
+        label: labelOf(el),
+        text: elementText(el),
+        placeholder: el.getAttribute('placeholder') || el.getAttribute('aria-placeholder') || '',
+        rect: rectOf(el),
+        disabled: isDisabled(el),
+        hasSvg: !!el.querySelector('svg,path'),
+        notes: isBulletScreenControl(el) ? ['blocked-danmu-player-control'] : [],
+      }));
+      const eligibleEditableTargets = editableTargets.filter((target) => !target.notes?.includes('blocked-danmu-player-control'));
+
+      const clickSeen = new Set<Element>();
+      const clickableTargets: PageTarget[] = [];
+      for (const el of all) {
+        if (!isClickable(el) || !isVisible(el)) continue;
+        const root = clickableRoot(el);
+        if (!root || clickSeen.has(root) || !isVisible(root)) continue;
+        clickSeen.add(root);
+        const rect = rectOf(root);
+        let nearest: PageTarget | undefined;
+        let nearestDistance = Number.POSITIVE_INFINITY;
+        for (const editable of eligibleEditableTargets) {
+          const d = distance(rect, editable.rect);
+          if (d < nearestDistance) {
+            nearestDistance = d;
+            nearest = editable;
+          }
+        }
+        const notes: string[] = [];
+        if (isBulletScreenControl(root)) notes.push('blocked-danmu-player-control');
+        if (!labelOf(root) && root.querySelector('svg,path')) notes.push('icon-only');
+        if (nearest && nearestDistance < 260) notes.push('near-editable');
+        clickableTargets.push({
+          ref_id: getOrCreateRef(root),
+          kind: 'clickable',
+          tag: root.tagName.toLowerCase(),
+          role: roleOf(root),
+          label: labelOf(root),
+          text: elementText(root),
+          placeholder: root.getAttribute('placeholder') || '',
+          rect,
+          disabled: isDisabled(root),
+          hasSvg: !!root.querySelector('svg,path'),
+          nearestEditableRef: nearest?.ref_id,
+          nearestEditableDistance: Number.isFinite(nearestDistance) ? nearestDistance : undefined,
+          notes,
+        });
+      }
+
+      const activeEl = document.activeElement instanceof Element ? document.activeElement : null;
+      const active = activeEl && isVisible(activeEl)
+        ? {
+          ref_id: getOrCreateRef(activeEl),
+          kind: isEditable(activeEl) ? 'editable' as const : 'clickable' as const,
+          tag: activeEl.tagName.toLowerCase(),
+          role: roleOf(activeEl),
+          label: labelOf(activeEl),
+          text: elementText(activeEl),
+          placeholder: activeEl.getAttribute('placeholder') || activeEl.getAttribute('aria-placeholder') || '',
+          rect: rectOf(activeEl),
+          disabled: isDisabled(activeEl),
+          hasSvg: !!activeEl.querySelector('svg,path'),
+        }
+        : null;
+
+      return {
+        editables: eligibleEditableTargets.slice(0, maxItems),
+        clickables: clickableTargets
+          .filter((target) => !target.notes?.includes('blocked-danmu-player-control'))
+          .sort((a, b) => (a.nearestEditableDistance ?? 9999) - (b.nearestEditableDistance ?? 9999))
+          .slice(0, maxItems),
+        active,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    },
+    [Math.max(1, Math.min(120, Math.floor(limit)))],
+  );
+}
+
+async function inspectTargets(sessionId: string, args: { limit?: number }) {
+  const tabId = await getCurrentTab(sessionId);
+  const context = await getTabContext(tabId);
+  const inspected = await scanInteractiveTargets(tabId, args.limit ?? 60);
+  return { ...context, ...inspected };
+}
+
 async function refIdToCoords(tabId: number, refId: string): Promise<{ x: number; y: number }> {
   await ensureA11yInjected(tabId);
   const coords = await runInPage<{ x: number; y: number } | null>(
@@ -298,6 +671,37 @@ async function refIdToCoords(tabId: number, refId: string): Promise<{ x: number;
   return coords;
 }
 
+function parsePoint(value: unknown, label: string): number {
+  if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number`);
+  }
+  return Math.round(value);
+}
+
+async function resolvePoint(tabId: number, input: HoverArgs, label: string): Promise<{ x: number; y: number }> {
+  if (typeof input.ref_id === 'string' && input.ref_id.trim()) {
+    return refIdToCoords(tabId, input.ref_id.trim());
+  }
+  if (input.x != null || input.y != null) {
+    if (input.x == null || input.y == null) {
+      throw new Error(`${label}: both x and y are required when ref_id is not provided`);
+    }
+    return { x: parsePoint(input.x, `${label}.x`), y: parsePoint(input.y, `${label}.y`) };
+  }
+  throw new Error(`${label}: provide ref_id or x/y`);
+}
+
+async function withTabId<T>(sessionId: string, requestedTabId: number | undefined, handler: (tabId: number) => Promise<T>): Promise<T> {
+  const prevTab = getSessionTab(sessionId);
+  if (requestedTabId != null) bindSessionToTab(sessionId, requestedTabId);
+  try {
+    const tabId = await getCurrentTab(sessionId);
+    return await handler(tabId);
+  } finally {
+    if (prevTab != null) bindSessionToTab(sessionId, prevTab);
+  }
+}
+
 async function clickRef(sessionId: string, args: { ref_id: string }) {
   const tabId = await getCurrentTab(sessionId);
   const dirty = await getRichTextDirtyState(tabId);
@@ -308,7 +712,50 @@ async function clickRef(sessionId: string, args: { ref_id: string }) {
   await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_PHANTOM_CURSOR', x, y }).catch(() => {});
   await new Promise((r) => setTimeout(r, 220));
   await cdp.mouseClick(tabId, x, y);
-  return { clicked: args.ref_id, x, y };
+  return { clicked: args.ref_id, x, y, ...(await getTabContext(tabId)) };
+}
+
+async function hover(sessionId: string, args: HoverArgs & { tool?: string }) {
+  return withTabId(sessionId, args.tabId, async (tabId) => {
+    const { x, y } = await resolvePoint(tabId, args, 'hover');
+    await cdp.mouseMove(tabId, x, y);
+    return { action: 'hover', tabId, x, y };
+  });
+}
+
+async function rightClick(sessionId: string, args: HoverArgs) {
+  return withTabId(sessionId, args.tabId, async (tabId) => {
+    const { x, y } = await resolvePoint(tabId, args, 'right_click');
+    await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_PHANTOM_CURSOR', x, y }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 120));
+    await cdp.mouseClick(tabId, x, y, 'right', 1);
+    return { action: 'right_click', tabId, x, y };
+  });
+}
+
+async function doubleClick(sessionId: string, args: HoverArgs) {
+  return withTabId(sessionId, args.tabId, async (tabId) => {
+    const { x, y } = await resolvePoint(tabId, args, 'double_click');
+    await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_PHANTOM_CURSOR', x, y }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 120));
+    await cdp.mouseClick(tabId, x, y, 'left', 2);
+    return { action: 'double_click', tabId, x, y };
+  });
+}
+
+async function drag(sessionId: string, args: DragArgs) {
+  return withTabId(sessionId, args.tabId, async (tabId) => {
+    const fromPoint = await resolvePoint(tabId, { ref_id: args.from_ref_id, x: args.from_x, y: args.from_y }, 'drag.from');
+    const toPoint = await resolvePoint(tabId, { ref_id: args.to_ref_id, x: args.to_x, y: args.to_y }, 'drag.to');
+
+    await cdp.mouseMove(tabId, fromPoint.x, fromPoint.y);
+    await cdp.mouseDown(tabId, fromPoint.x, fromPoint.y, 'left');
+
+    await cdp.mouseMove(tabId, toPoint.x, toPoint.y);
+    await cdp.mouseUp(tabId, toPoint.x, toPoint.y, 'left');
+
+    return { action: 'drag', tabId, from: fromPoint, to: toPoint };
+  });
 }
 
 async function refIdLooksLikeSubmitButton(tabId: number, refId: string): Promise<boolean> {
@@ -325,8 +772,32 @@ async function refIdLooksLikeSubmitButton(tabId: number, refId: string): Promise
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
+      function contextSignature(el: Element): string {
+        const parts: string[] = [];
+        let current: Element | null = el;
+        for (let depth = 0; current && current !== document.body && depth < 7; depth += 1) {
+          const html = current as HTMLElement;
+          const className = typeof html.className === 'string' ? html.className : '';
+          parts.push(
+            current.tagName,
+            current.id || '',
+            className,
+            current.getAttribute('aria-label') || '',
+            current.getAttribute('title') || '',
+            current.getAttribute('placeholder') || '',
+          );
+          if (depth <= 2) parts.push((current.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180));
+          current = current.parentElement;
+        }
+        return parts.filter(Boolean).join(' ').toLowerCase();
+      }
+      const host = location.hostname.toLowerCase();
+      if (/(^|\.)douyin\.com$|(^|\.)bilibili\.com$|(^|\.)b23\.tv$/.test(host)
+        && /(弹幕|发弹幕|发送弹幕|danmu|danmaku|barrage|bullet[-_ ]?screen)/i.test(contextSignature(target))) {
+        return false;
+      }
       const positive = /(发帖|发布|发送|评论|回复|post|tweet|send|comment|reply)/i;
-      const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next)/i;
+      const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next|弹幕|danmu|danmaku|barrage)/i;
       return Boolean(label && positive.test(label) && !negative.test(label));
     },
     [refId],
@@ -382,10 +853,6 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
         '[role="textbox"]',
       ].join(',');
 
-      function normalize(value: string | null | undefined): string {
-        return (value || '').replace(/\s+/g, ' ').trim();
-      }
-
       function isVisible(node: Element): boolean {
         const rect = (node as HTMLElement).getBoundingClientRect();
         const style = window.getComputedStyle(node as HTMLElement);
@@ -397,6 +864,10 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
         const ref = window.__hermesElementMap?.[targetRef];
         const node = ref && ref.deref ? ref.deref() : null;
         return node instanceof Element ? node : null;
+      }
+
+      function weakRef(el: Element) {
+        return typeof WeakRef === 'function' ? new WeakRef(el) : { deref: () => el };
       }
 
       function isEditable(el: Element | null): el is HTMLElement | HTMLInputElement | HTMLTextAreaElement {
@@ -432,8 +903,51 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
       function isSubmitButton(button: Element): boolean {
         const label = buttonText(button);
         const positive = /(发帖|发布|发送|评论|回复|post|tweet|send|comment|reply)/i;
-        const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next)/i;
+        const negative = /(添加|add|gif|emoji|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next|弹幕|danmu|danmaku|barrage)/i;
         return Boolean(label && positive.test(label) && !negative.test(label));
+      }
+
+      function elementContextSignature(el: Element): string {
+        const parts: string[] = [];
+        let node: Element | null = el;
+        for (let depth = 0; node && node !== document.body && depth < 7; depth += 1) {
+          const html = node as HTMLElement;
+          const className = typeof html.className === 'string' ? html.className : '';
+          parts.push(
+            node.tagName,
+            node.id || '',
+            className,
+            node.getAttribute('role') || '',
+            node.getAttribute('aria-label') || '',
+            node.getAttribute('title') || '',
+            node.getAttribute('placeholder') || '',
+            node.getAttribute('aria-placeholder') || '',
+            node.getAttribute('data-e2e') || '',
+            node.getAttribute('data-testid') || '',
+            node.getAttribute('data-test-id') || '',
+          );
+          if (depth <= 2) parts.push((node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180));
+          node = node.parentElement;
+        }
+        return parts.filter(Boolean).join(' ').toLowerCase();
+      }
+
+      function isBulletScreenControl(el: Element): boolean {
+        const host = location.hostname.toLowerCase();
+        if (!/(^|\.)douyin\.com$|(^|\.)bilibili\.com$|(^|\.)b23\.tv$/.test(host)) return false;
+        const signature = elementContextSignature(el);
+        const ownText = [
+          el.getAttribute('aria-label'),
+          el.getAttribute('title'),
+          el.getAttribute('placeholder'),
+          el.getAttribute('aria-placeholder'),
+          readText(el),
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (/(弹幕|发弹幕|发送弹幕|danmu|danmaku|barrage|bullet[-_ ]?screen)/i.test(signature)) return true;
+        const playerLike = /(xgplayer|bpx[-_]?player|bilibili[-_]?player|web[-_]?player|video[-_]?controls?|controlbar|controller|播放器)/i.test(signature);
+        const commentLike = /(评论|回复|comment|reply)/i.test(ownText);
+        const rect = el.getBoundingClientRect();
+        return playerLike && !commentLike && rect.top > window.innerHeight * 0.55;
       }
 
       function scoreCandidate(el: Element, base: Element | null): number {
@@ -515,8 +1029,19 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
         }
       }
 
-      document
-        .querySelectorAll('[data-hermes-type-target],[data-hermes-type-scope],[data-hermes-editable-index]')
+      function collectDeep(root: Document | ShadowRoot, selector: string, out: Element[] = []): Element[] {
+        out.push(...Array.from(root.querySelectorAll(selector)));
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.nextNode();
+        while (node) {
+          const shadow = (node as HTMLElement).shadowRoot;
+          if (shadow) collectDeep(shadow, selector, out);
+          node = walker.nextNode();
+        }
+        return out;
+      }
+
+      collectDeep(document, '[data-hermes-type-target],[data-hermes-type-scope],[data-hermes-editable-index]')
         .forEach((node) => {
           node.removeAttribute('data-hermes-type-target');
           node.removeAttribute('data-hermes-type-scope');
@@ -528,6 +1053,18 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
         return { ok: false, token: markerToken, target_kind: 'none', scope_kind: 'none', actual_text: '', snapshots: [], tried, error: 'No editable target found' };
       }
       const scope = resolveScope(target);
+      if (isBulletScreenControl(target)) {
+        return {
+          ok: false,
+          token: markerToken,
+          target_kind: targetKind(target),
+          scope_kind: scopeKind(scope),
+          actual_text: readText(target),
+          snapshots: [],
+          tried: [...tried, 'blocked_danmu_player_input'],
+          error: 'Target appears to be a bullet-screen/danmu input in the video player, not a normal comment editor. Open/scroll to the comment area and choose a 评论/回复 textbox instead.',
+        };
+      }
       (target as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'center' });
       (target as HTMLElement).focus?.();
       const richTextTarget = target instanceof HTMLElement
@@ -557,6 +1094,11 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
 
       target.setAttribute('data-hermes-type-target', markerToken);
       scope.setAttribute('data-hermes-type-scope', markerToken);
+      const w = window as any;
+      if (!w.__hermesTypeTargets) w.__hermesTypeTargets = {};
+      if (!w.__hermesTypeScopes) w.__hermesTypeScopes = {};
+      w.__hermesTypeTargets[markerToken] = weakRef(target);
+      w.__hermesTypeScopes[markerToken] = weakRef(scope);
       const editables = Array.from(scope.querySelectorAll(editableSelector)).filter(isVisible);
       if (!editables.includes(target)) editables.unshift(target);
       const snapshots = editables
@@ -565,20 +1107,6 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
           el.setAttribute('data-hermes-editable-index', String(index));
           return { index, text: readText(el), target: el === target };
         });
-      const dirty = snapshots.find((item) => !item.target && normalize(item.text));
-      if (dirty) {
-        return {
-          ok: false,
-          token: markerToken,
-          target_kind: targetKind(target),
-          scope_kind: scopeKind(scope),
-          actual_text: targetText,
-          snapshots,
-          tried,
-          error: 'Other un-cleared editors exist in the input scope; input not executed',
-        };
-      }
-
       return {
         ok: true,
         token: markerToken,
@@ -593,14 +1121,38 @@ async function prepareAtomicType(tabId: number, refId: string | undefined, token
   );
 }
 
-async function inspectAtomicType(tabId: number, token: string, expected: string): Promise<EditableStatus> {
+async function inspectAtomicType(tabId: number, token: string, expected: string, snapshots: EditableSnapshot[], requireSubmitEnabled: boolean): Promise<EditableStatus> {
   return runInPage<EditableStatus>(
     tabId,
-    (markerToken, inputText) => {
+    (markerToken, inputText, previousSnapshots, shouldRequireSubmitEnabled) => {
       const tried: string[] = ['inspect_atomic_type'];
       const editableSelector = 'textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]';
-      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
-      const scope = document.querySelector(`[data-hermes-type-scope="${markerToken}"]`) || target?.parentElement || null;
+
+      function queryDeep(root: Document | ShadowRoot, selector: string): Element | null {
+        const direct = root.querySelector(selector);
+        if (direct) return direct;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.nextNode();
+        while (node) {
+          const shadow = (node as HTMLElement).shadowRoot;
+          if (shadow) {
+            const found = queryDeep(shadow, selector);
+            if (found) return found;
+          }
+          node = walker.nextNode();
+        }
+        return null;
+      }
+
+      function tokenElement(mapName: string, attrName: string): Element | null {
+        const ref = (window as any)[mapName]?.[markerToken];
+        const node = ref && ref.deref ? ref.deref() : null;
+        if (node instanceof Element && node.isConnected) return node;
+        return queryDeep(document, `[${attrName}="${markerToken}"]`);
+      }
+
+      const target = tokenElement('__hermesTypeTargets', 'data-hermes-type-target');
+      const scope = tokenElement('__hermesTypeScopes', 'data-hermes-type-scope') || target?.parentElement || null;
 
       function normalize(value: string | null | undefined): string {
         return (value || '').replace(/\s+/g, ' ').trim();
@@ -693,6 +1245,10 @@ async function inspectAtomicType(tabId: number, token: string, expected: string)
         return {};
       }
 
+      const snapshotByIndex = new Map(
+        (previousSnapshots as EditableSnapshot[]).map((item) => [String(item.index), normalize(item.text)]),
+      );
+      const expectedText = normalize(inputText);
       if (!target) {
         return { ok: false, target_kind: 'none', scope_kind: scopeKind(scope), actual_text: '', residue_preview: '', placeholder_visible: false, error: 'Target editor marker lost', tried };
       }
@@ -701,25 +1257,38 @@ async function inspectAtomicType(tabId: number, token: string, expected: string)
       const editables = scope ? Array.from(scope.querySelectorAll(editableSelector)).filter(isVisible) : [target];
       if (!editables.includes(target)) editables.unshift(target);
       const uniqueEditables = editables.filter((el, index, arr) => arr.indexOf(el) === index);
-      const otherTexts = uniqueEditables
+      const otherConflicts = uniqueEditables
         .filter((el) => el !== target)
-        .map(readText)
-        .filter((text) => Boolean(normalize(text)));
+        .map((el) => {
+          const index = el.getAttribute('data-hermes-editable-index');
+          const text = readText(el);
+          return { text, previous: index != null ? snapshotByIndex.get(index) ?? '' : '' };
+        })
+        .filter((item) => {
+          const current = normalize(item.text);
+          if (!expectedText || !current || current === item.previous) return false;
+          return current.includes(expectedText);
+        })
+        .map((item) => item.text);
       const targetRepeats = repeatedCount(actual);
       const submit = submitButtonState(scope);
-      const placeholderVisible = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? false : isPlaceholderVisible(target);
+      const placeholderVisible = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+        ? false
+        : !normalize(actual) && isPlaceholderVisible(target);
       let error: string | undefined;
-      if (!normalize(inputText) || normalize(actual) !== normalize(inputText)) {
-        error = targetRepeats > 1 ? `输入内容重复了 ${targetRepeats} 次，已阻止继续提交` : '目标编辑器内容与要输入的文本不一致';
-      } else if (otherTexts.length > 0) {
-        error = '输入作用域内存在额外文本，已阻止继续提交';
+      if (!expectedText || normalize(actual) !== expectedText) {
+        error = targetRepeats > 1
+          ? `Input text repeated ${targetRepeats} times in the editor; submission blocked`
+          : 'Target editor content does not match the text to input';
+      } else if (otherConflicts.length > 0) {
+        error = 'Input text also appeared in another editor in the same form; submission blocked';
       } else if (placeholderVisible) {
-        error = '编辑器 placeholder 仍可见，页面没有接受这次富文本输入';
-      } else if (submit.disabled) {
-        error = `输入后“${submit.label}”按钮仍不可用，页面没有接受这次富文本输入`;
+        error = 'Editor placeholder still visible; the page did not accept this rich-text input';
+      } else if (shouldRequireSubmitEnabled && submit.disabled) {
+        error = `"${submit.label}" button still disabled after input; the page did not accept this rich-text input`;
       }
 
-      const residuePreview = otherTexts.concat(targetRepeats > 1 ? [actual] : []).join(' | ').slice(0, 180);
+      const residuePreview = otherConflicts.concat(targetRepeats > 1 ? [actual] : []).join(' | ').slice(0, 180);
       return {
         ok: !error,
         target_kind: targetKind(target),
@@ -733,7 +1302,7 @@ async function inspectAtomicType(tabId: number, token: string, expected: string)
         tried,
       };
     },
-    [token, expected],
+    [token, expected, snapshots, requireSubmitEnabled],
   );
 }
 
@@ -742,9 +1311,32 @@ async function inspectAtomicDraft(tabId: number, token: string): Promise<DraftIn
     tabId,
     (markerToken) => {
       const tried: string[] = ['inspect_atomic_draft'];
-      const editableSelector = 'textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]';
-      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
-      const scope = document.querySelector(`[data-hermes-type-scope="${markerToken}"]`) || target?.parentElement || null;
+
+      function queryDeep(root: Document | ShadowRoot, selector: string): Element | null {
+        const direct = root.querySelector(selector);
+        if (direct) return direct;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.nextNode();
+        while (node) {
+          const shadow = (node as HTMLElement).shadowRoot;
+          if (shadow) {
+            const found = queryDeep(shadow, selector);
+            if (found) return found;
+          }
+          node = walker.nextNode();
+        }
+        return null;
+      }
+
+      function tokenElement(mapName: string, attrName: string): Element | null {
+        const ref = (window as any)[mapName]?.[markerToken];
+        const node = ref && ref.deref ? ref.deref() : null;
+        if (node instanceof Element && node.isConnected) return node;
+        return queryDeep(document, `[${attrName}="${markerToken}"]`);
+      }
+
+      const target = tokenElement('__hermesTypeTargets', 'data-hermes-type-target');
+      const scope = tokenElement('__hermesTypeScopes', 'data-hermes-type-scope') || target?.parentElement || null;
 
       function normalize(value: string | null | undefined): string {
         return (value || '').replace(/\s+/g, ' ').trim();
@@ -771,12 +1363,6 @@ async function inspectAtomicDraft(tabId: number, token: string): Promise<DraftIn
         return el.tagName.toLowerCase();
       }
 
-      function isVisible(node: Element): boolean {
-        const rect = (node as HTMLElement).getBoundingClientRect();
-        const style = window.getComputedStyle(node as HTMLElement);
-        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0.05;
-      }
-
       if (!target) {
         return {
           empty: false,
@@ -790,26 +1376,367 @@ async function inspectAtomicDraft(tabId: number, token: string): Promise<DraftIn
         };
       }
 
-      const editables = scope ? Array.from(scope.querySelectorAll(editableSelector)).filter(isVisible) : [target];
-      if (!editables.includes(target)) editables.unshift(target);
-      const texts = editables
-        .filter((el, index, arr) => arr.indexOf(el) === index)
-        .map(readText)
-        .filter((text) => Boolean(normalize(text)));
-      const allText = texts.join(' | ');
+      // Only the target editor's content matters here. Other editables in the
+      // same scope (placeholder overlays, sibling compose boxes, decorative
+      // contenteditables — e.g. YouTube's `添加评论…` placeholder inside
+      // `ytd-comment-simplebox-renderer`) used to be read via innerText and
+      // mis-classified as draft residue, which then tripped the dirty lock
+      // and made every subsequent type() call fail.
+      const targetText = readText(target);
+      const targetNormalized = normalize(targetText);
       return {
-        empty: texts.length === 0,
+        empty: targetNormalized.length === 0,
         target_kind: targetKind(target),
         scope_kind: scopeKind(scope),
-        target_text: readText(target),
-        all_text: allText,
-        residue_preview: allText.slice(0, 180),
+        target_text: targetText,
+        all_text: targetNormalized,
+        residue_preview: targetNormalized.slice(0, 180),
         tried,
-        error: texts.length > 0 ? '输入前作用域没有清空' : undefined,
+        error: targetNormalized ? 'Target editor not empty before input' : undefined,
       };
     },
     [token],
   );
+}
+
+async function submitCurrentEditor(tabId: number, token: string, tried: string[]): Promise<SubmitAttempt> {
+  tried.push('submit_discover_candidates');
+  const discovery = await runInPage<{ target_text: string; candidates: SubmitCandidate[] }>(
+    tabId,
+    (markerToken) => {
+      const host = location.hostname.toLowerCase();
+      const w = window as any;
+      if (!w.__hermesElementMap) w.__hermesElementMap = {};
+      if (!w.__hermesRefCounter) w.__hermesRefCounter = 0;
+
+      function queryDeep(root: Document | ShadowRoot, selector: string): Element | null {
+        const direct = root.querySelector(selector);
+        if (direct) return direct;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.nextNode();
+        while (node) {
+          const shadow = (node as HTMLElement).shadowRoot;
+          if (shadow) {
+            const found = queryDeep(shadow, selector);
+            if (found) return found;
+          }
+          node = walker.nextNode();
+        }
+        return null;
+      }
+
+      function tokenElement(mapName: string, attrName: string): Element | null {
+        const ref = w[mapName]?.[markerToken];
+        const node = ref && ref.deref ? ref.deref() : null;
+        if (node instanceof Element && node.isConnected) return node;
+        return queryDeep(document, `[${attrName}="${markerToken}"]`);
+      }
+
+      const target = tokenElement('__hermesTypeTargets', 'data-hermes-type-target');
+      const scope = tokenElement('__hermesTypeScopes', 'data-hermes-type-scope') || target?.parentElement || null;
+
+      function getOrCreateRef(el: Element): string {
+        for (const key in w.__hermesElementMap) {
+          if (w.__hermesElementMap[key]?.deref?.() === el) return key;
+        }
+        const ref = `ref_${++w.__hermesRefCounter}`;
+        w.__hermesElementMap[ref] = new WeakRef(el);
+        return ref;
+      }
+
+      function isVisible(el: Element): boolean {
+        const r = (el as HTMLElement).getBoundingClientRect();
+        const s = window.getComputedStyle(el as HTMLElement);
+        return r.width > 0
+          && r.height > 0
+          && r.bottom > 0
+          && r.right > 0
+          && r.top < window.innerHeight
+          && r.left < window.innerWidth
+          && s.display !== 'none'
+          && s.visibility !== 'hidden'
+          && parseFloat(s.opacity || '1') > 0.05;
+      }
+
+      function readText(el: Element | null): string {
+        if (!el) return '';
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value || '';
+        return (el as HTMLElement).innerText || el.textContent || '';
+      }
+
+      function labelOf(el: Element): string {
+        const svgTitle = el.querySelector('svg title,title')?.textContent?.trim();
+        return [
+          el.getAttribute('aria-label'),
+          el.getAttribute('title'),
+          el.getAttribute('placeholder'),
+          svgTitle,
+          el.textContent,
+        ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+      }
+
+      function elementContextSignature(el: Element): string {
+        const parts: string[] = [];
+        let node: Element | null = el;
+        for (let depth = 0; node && node !== document.body && depth < 7; depth += 1) {
+          const html = node as HTMLElement;
+          const className = typeof html.className === 'string' ? html.className : '';
+          parts.push(
+            node.tagName,
+            node.id || '',
+            className,
+            node.getAttribute('role') || '',
+            node.getAttribute('aria-label') || '',
+            node.getAttribute('title') || '',
+            node.getAttribute('placeholder') || '',
+            node.getAttribute('aria-placeholder') || '',
+            node.getAttribute('data-e2e') || '',
+            node.getAttribute('data-testid') || '',
+            node.getAttribute('data-test-id') || '',
+          );
+          if (depth <= 2) parts.push((node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180));
+          node = node.parentElement;
+        }
+        return parts.filter(Boolean).join(' ').toLowerCase();
+      }
+
+      function isBulletScreenControl(el: Element): boolean {
+        if (!/(^|\.)douyin\.com$|(^|\.)bilibili\.com$|(^|\.)b23\.tv$/.test(host)) return false;
+        const signature = elementContextSignature(el);
+        const ownText = [
+          labelOf(el),
+          el.getAttribute('placeholder'),
+          el.getAttribute('aria-placeholder'),
+          readText(el),
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (/(弹幕|发弹幕|发送弹幕|danmu|danmaku|barrage|bullet[-_ ]?screen)/i.test(signature)) return true;
+        const playerLike = /(xgplayer|bpx[-_]?player|bilibili[-_]?player|web[-_]?player|video[-_]?controls?|controlbar|controller|播放器)/i.test(signature);
+        const commentLike = /(评论|回复|comment|reply)/i.test(ownText);
+        const rect = el.getBoundingClientRect();
+        return playerLike && !commentLike && rect.top > window.innerHeight * 0.55;
+      }
+
+      function roleOf(el: Element): string {
+        const explicit = el.getAttribute('role');
+        if (explicit) return explicit.trim().toLowerCase();
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'button') return 'button';
+        if (tag === 'a') return 'link';
+        return 'generic';
+      }
+
+      function disabled(el: Element): boolean {
+        const s = window.getComputedStyle(el as HTMLElement);
+        return (el instanceof HTMLButtonElement && el.disabled)
+          || el.getAttribute('disabled') != null
+          || el.getAttribute('aria-disabled') === 'true'
+          || s.pointerEvents === 'none';
+      }
+
+      function clickableRoot(el: Element): Element | null {
+        if (target && (el.contains(target) || target.contains(el))) return null;
+        if (el.closest('[contenteditable="true"],[contenteditable="plaintext-only"],textarea,input,[role="textbox"]')) return null;
+        return el.closest('button,[role="button"],a,[role="link"],summary,[tabindex]') || el;
+      }
+
+      function collect(root: ParentNode, out: Element[], seen: Set<Element>) {
+        for (const el of Array.from(root.children || [])) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          out.push(el);
+          const shadow = (el as HTMLElement).shadowRoot;
+          if (shadow) collect(shadow, out, seen);
+          collect(el, out, seen);
+        }
+      }
+
+      function distance(a: DOMRect, b: DOMRect): number {
+        return Math.hypot((a.left + a.width / 2) - (b.left + b.width / 2), (a.top + a.height / 2) - (b.top + b.height / 2));
+      }
+
+      if (!(target instanceof Element)) return { target_text: '', candidates: [] };
+      const targetRect = target.getBoundingClientRect();
+      const roots: ParentNode[] = [];
+      const addRoot = (root: ParentNode | null | undefined) => {
+        if (root && !roots.includes(root)) roots.push(root);
+      };
+      addRoot(scope);
+      const rootNode = target.getRootNode();
+      if (rootNode instanceof ShadowRoot) {
+        addRoot(rootNode);
+        addRoot(rootNode.host);
+        let hostAncestor: Element | null = rootNode.host.parentElement;
+        for (let i = 0; hostAncestor && hostAncestor !== document.body && i < 5; i += 1) {
+          addRoot(hostAncestor);
+          hostAncestor = hostAncestor.parentElement;
+        }
+      }
+      const dialog = target.closest('[role="dialog"],[aria-modal="true"],form,article,section');
+      if (dialog && dialog !== scope) addRoot(dialog);
+      let ancestor: Element | null = target.parentElement;
+      for (let i = 0; ancestor && ancestor !== document.body && i < 7; i += 1) {
+        addRoot(ancestor);
+        ancestor = ancestor.parentElement;
+      }
+
+      if (target && isBulletScreenControl(target)) {
+        return { target_text: readText(target), candidates: [] };
+      }
+
+      const elements: Element[] = [];
+      const seen = new Set<Element>();
+      for (const root of roots) collect(root, elements, seen);
+      const clickables = new Set<Element>();
+      for (const el of elements) {
+        const tag = el.tagName.toLowerCase();
+        const role = roleOf(el);
+        const style = window.getComputedStyle(el as HTMLElement);
+        const clickable = ['button', 'a', 'summary'].includes(tag)
+          || ['button', 'link', 'menuitem'].includes(role)
+          || el.hasAttribute('tabindex')
+          || ((el.getAttribute('aria-label') || el.getAttribute('title')) && style.cursor === 'pointer')
+          || (style.cursor === 'pointer' && !!el.querySelector('svg,path'));
+        if (!clickable || !isVisible(el)) continue;
+        const root = clickableRoot(el);
+        if (root && isVisible(root)) clickables.add(root);
+      }
+
+      const positive = /(发帖|发布|发送|提交|评论|回复|post|tweet|send|submit|comment|reply)/i;
+      const negative = /(添加|add|gif|emoji|表情|media|图片|照片|投票|schedule|日程|draft|草稿|下一步|next|搜索|search|展开|更多|more|分享|share|点赞|like|收藏|favorite|关闭|close|弹幕|danmu|danmaku|barrage)/i;
+      const candidates: SubmitCandidate[] = [];
+      for (const button of Array.from(clickables)) {
+        if (isBulletScreenControl(button)) continue;
+        const r = button.getBoundingClientRect();
+        const label = labelOf(button);
+        const tag = button.tagName.toLowerCase();
+        const role = roleOf(button);
+        const hasSvg = !!button.querySelector('svg,path');
+        const targetCenterX = targetRect.left + targetRect.width / 2;
+        const targetCenterY = targetRect.top + targetRect.height / 2;
+        const buttonCenterX = r.left + r.width / 2;
+        const buttonCenterY = r.top + r.height / 2;
+        const sameRow = Math.abs(buttonCenterY - targetCenterY) < Math.max(targetRect.height, r.height) + 32;
+        const rightOfEditor = buttonCenterX > targetCenterX;
+        let score = 0;
+        if (positive.test(label)) score += 80;
+        if (negative.test(label)) score -= 120;
+        if (tag === 'button') score += 25;
+        if (role === 'button') score += 20;
+        if (hasSvg) score += 18;
+        if (!label && hasSvg) score += 12;
+        if (r.width <= 96 && r.height <= 96) score += 10;
+        if (r.width > 220 || r.height > 120) score -= 25;
+        if (r.left >= targetRect.left - 8) score += 10;
+        if (rightOfEditor) score += 18;
+        if (sameRow) score += 20;
+        // Icon-only send buttons are often on the same row at the far right of
+        // the comment editor. Existing comment "reply" actions can also score
+        // high by label, but they sit below the editor. Prefer the row-aligned
+        // icon and strongly down-rank reply controls below the input slot.
+        if (sameRow && rightOfEditor && hasSvg) score += 70;
+        if (/(回复|reply)/i.test(label) && !sameRow) score -= 95;
+        if (/(回复|reply)/i.test(label) && buttonCenterY > targetRect.bottom + 48) score -= 80;
+        const d = distance(r, targetRect);
+        if (d < 300) score += Math.round(30 - d / 12);
+        if (host.includes('douyin.com')) {
+          if (sameRow && rightOfEditor && hasSvg) score += 120;
+          if (sameRow && buttonCenterX > targetRect.right) score += 80;
+          if (buttonCenterX > targetRect.right + 160) score += 25;
+          if (/(回复|reply)/i.test(label)) score -= 220;
+          if (!sameRow) score -= 70;
+          if (!rightOfEditor) score -= 90;
+        }
+        if (disabled(button)) score -= 140;
+        if (button.contains(target) || target.contains(button)) score -= 200;
+        if (score <= 0) continue;
+        candidates.push({
+          ref_id: getOrCreateRef(button),
+          label,
+          tag,
+          role,
+          score,
+          x: Math.round(r.left + r.width / 2),
+          y: Math.round(r.top + r.height / 2),
+          disabled: disabled(button),
+          hasSvg,
+          same_row: sameRow,
+          right_of_editor: rightOfEditor,
+          distance: Math.round(d),
+        });
+      }
+      return {
+        target_text: readText(target),
+        candidates: candidates.sort((a, b) => (
+          b.score - a.score
+          || Number(Boolean(b.same_row)) - Number(Boolean(a.same_row))
+          || Number(Boolean(b.right_of_editor)) - Number(Boolean(a.right_of_editor))
+          || b.x - a.x
+          || (a.distance ?? 0) - (b.distance ?? 0)
+        )).slice(0, 8),
+      };
+    },
+    [token],
+  ).catch(() => ({ target_text: '', candidates: [] }));
+
+  const inspectPostSubmitDraft = () => inspectAtomicDraft(tabId, token).catch((e) => ({
+    empty: true,
+    target_kind: 'none',
+    scope_kind: 'none',
+    target_text: '',
+    all_text: '',
+    residue_preview: '',
+    tried: ['inspect_atomic_draft_after_submit_failed'],
+    error: e instanceof Error ? e.message : String(e),
+  }));
+
+  const candidates = discovery.candidates.filter((candidate) => !candidate.disabled && candidate.score >= 25).slice(0, 5);
+  const attempted: SubmitCandidate[] = [];
+  let button: SubmitCandidate | undefined;
+  let method = 'none';
+  let post: DraftInspection = {
+    empty: false,
+    target_kind: 'none',
+    scope_kind: 'none',
+    target_text: discovery.target_text || '',
+    all_text: discovery.target_text || '',
+    residue_preview: '',
+    tried: [],
+  };
+
+  for (const candidate of candidates) {
+    attempted.push(candidate);
+    button = candidate;
+    method = 'button';
+    tried.push(`submit_click_candidate:${candidate.ref_id}:${candidate.score}`);
+    await cdp.mouseClick(tabId, candidate.x, candidate.y);
+    await sleep(850);
+    post = await inspectPostSubmitDraft();
+    tried.push(...post.tried);
+    if (!post.target_text?.replace(/\s+/g, ' ').trim()) {
+      break;
+    }
+    tried.push(`submit_candidate_left_text:${candidate.ref_id}`);
+  }
+
+  if (attempted.length === 0) {
+    method = 'enter';
+    tried.push('submit_fallback_enter');
+    await cdp.pressKey(tabId, 'Enter');
+    await sleep(650);
+    post = await inspectPostSubmitDraft();
+    tried.push(...post.tried);
+  }
+
+  const textStillPresent = !!post.target_text?.replace(/\s+/g, ' ').trim();
+  return {
+    submitted: !textStillPresent,
+    method,
+    button,
+    candidates: discovery.candidates,
+    attempted_buttons: attempted,
+    post_submit_text_still_present: textStillPresent,
+    post_submit_text_preview: (post.target_text || '').slice(0, 160),
+  };
 }
 
 async function rollbackAtomicType(tabId: number, token: string, expected: string, snapshots: EditableSnapshot[]): Promise<EditableStatus> {
@@ -818,8 +1745,32 @@ async function rollbackAtomicType(tabId: number, token: string, expected: string
     (markerToken, inputText, previousSnapshots) => {
       const tried: string[] = ['rollback_atomic_type'];
       const editableSelector = 'textarea,input,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]';
-      const scope = document.querySelector(`[data-hermes-type-scope="${markerToken}"]`);
-      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
+
+      function queryDeep(root: Document | ShadowRoot, selector: string): Element | null {
+        const direct = root.querySelector(selector);
+        if (direct) return direct;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.nextNode();
+        while (node) {
+          const shadow = (node as HTMLElement).shadowRoot;
+          if (shadow) {
+            const found = queryDeep(shadow, selector);
+            if (found) return found;
+          }
+          node = walker.nextNode();
+        }
+        return null;
+      }
+
+      function tokenElement(mapName: string, attrName: string): Element | null {
+        const ref = (window as any)[mapName]?.[markerToken];
+        const node = ref && ref.deref ? ref.deref() : null;
+        if (node instanceof Element && node.isConnected) return node;
+        return queryDeep(document, `[${attrName}="${markerToken}"]`);
+      }
+
+      const scope = tokenElement('__hermesTypeScopes', 'data-hermes-type-scope');
+      const target = tokenElement('__hermesTypeTargets', 'data-hermes-type-target');
 
       function normalize(value: string | null | undefined): string {
         return (value || '').replace(/\s+/g, ' ').trim();
@@ -913,7 +1864,27 @@ async function refocusAtomicTarget(tabId: number, token: string, tried: string[]
   await runInPage<void>(
     tabId,
     (markerToken) => {
-      const target = document.querySelector(`[data-hermes-type-target="${markerToken}"]`);
+      function queryDeep(root: Document | ShadowRoot, selector: string): Element | null {
+        const direct = root.querySelector(selector);
+        if (direct) return direct;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.nextNode();
+        while (node) {
+          const shadow = (node as HTMLElement).shadowRoot;
+          if (shadow) {
+            const found = queryDeep(shadow, selector);
+            if (found) return found;
+          }
+          node = walker.nextNode();
+        }
+        return null;
+      }
+
+      const ref = (window as any).__hermesTypeTargets?.[markerToken];
+      const node = ref && ref.deref ? ref.deref() : null;
+      const target = node instanceof Element && node.isConnected
+        ? node
+        : queryDeep(document, `[data-hermes-type-target="${markerToken}"]`);
       if (target instanceof HTMLElement) {
         target.scrollIntoView({ block: 'center', inline: 'center' });
         target.focus();
@@ -931,6 +1902,10 @@ async function pasteClipboardIntoFocusedEditable(tabId: number, tried: string[])
 }
 
 async function typeText(sessionId: string, args: { ref_id?: string; text: string; submit?: boolean }) {
+  if (typeof args.text !== 'string' || !args.text.trim()) {
+    throw new Error('text argument must be a non-empty string');
+  }
+
   const tabId = await getCurrentTab(sessionId);
   const dirty = await getRichTextDirtyState(tabId);
   if (dirty) throw new Error(richTextDirtyError(dirty));
@@ -977,7 +1952,27 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       const emptyStatus = await inspectAtomicDraft(tabId, token);
       tried.push(...emptyStatus.tried);
       if (!emptyStatus.empty) {
-        richTextUnsafeFailure = true;
+        if (normalizedEquals(emptyStatus.target_text, args.text)) {
+          const submit = args.submit ? await submitCurrentEditor(tabId, token, tried) : null;
+          const context = await getTabContext(tabId);
+          return {
+            typed_chars: 0,
+            submitted: submit ? submit.submitted && !submit.post_submit_text_still_present : false,
+            verified: true,
+            strategy: 'existing_text_verified',
+            target_kind: emptyStatus.target_kind,
+            scope_kind: emptyStatus.scope_kind,
+            submit_button_disabled: submit?.button?.disabled ?? false,
+            actual_text_preview: (emptyStatus.target_text || '').slice(0, 160),
+            ...context,
+            submit_method: submit?.method,
+            submit_button_ref: submit?.button?.ref_id,
+            submit_button_label: submit?.button?.label,
+            post_submit_text_still_present: submit?.post_submit_text_still_present,
+            candidate_submit_buttons: submit?.candidates.slice(0, 5),
+            attempted_submit_buttons: submit?.attempted_buttons?.slice(0, 5),
+          } satisfies TypeResult;
+        }
         lastStatus = {
           ok: false,
           target_kind: emptyStatus.target_kind,
@@ -985,7 +1980,7 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
           actual_text: emptyStatus.target_text,
           residue_preview: emptyStatus.residue_preview,
           placeholder_visible: false,
-          error: emptyStatus.error || '富文本编辑器清空失败，未执行输入',
+          error: 'Target editor already contains different text; input not executed',
           rollback: false,
           tried,
         };
@@ -998,14 +1993,14 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
       try {
         const pasted = await withTemporaryClipboard(args.text, async () => {
           await pasteClipboardIntoFocusedEditable(tabId, tried);
-          let inspect = await inspectAtomicType(tabId, token, args.text);
+          let inspect = await inspectAtomicType(tabId, token, args.text, preparation.snapshots, !!args.submit);
           // X/YouTube 的富文本 paste 可能异步落盘；只等待和复查，
           // 绝不再次粘贴，避免同一段文本被页面接收两次。
           for (const delay of [280, 560, 900]) {
             if (inspect.ok) break;
             tried.push(`clipboard_paste_verify_wait_${delay}`);
             await sleep(delay);
-            inspect = await inspectAtomicType(tabId, token, args.text);
+            inspect = await inspectAtomicType(tabId, token, args.text, preparation.snapshots, !!args.submit);
           }
           return inspect;
         });
@@ -1032,19 +2027,30 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
 
       status.tried = [...tried, ...status.tried];
       if (status.ok) {
-        if (args.submit) await cdp.pressKey(tabId, 'Enter');
-        return {
+        const submit = args.submit ? await submitCurrentEditor(tabId, token, tried) : null;
+        const context = await getTabContext(tabId);
+        const result: TypeResult = {
           typed_chars: args.text.length,
-          submitted: !!args.submit,
+          submitted: submit ? submit.submitted && !submit.post_submit_text_still_present : false,
           verified: true,
           strategy: 'clipboard_paste',
           target_kind: status.target_kind,
           scope_kind: status.scope_kind,
-          submit_button_disabled: false,
+          submit_button_disabled: submit?.button?.disabled ?? status.submit_button_disabled ?? false,
           actual_text_preview: (status.actual_text || '').slice(0, 160),
-          clipboard_restore_mode: clipboardRestore.mode,
-          clipboard_restore_error: clipboardRestore.error,
-        } satisfies TypeResult;
+          ...context,
+          submit_method: submit?.method,
+          submit_button_ref: submit?.button?.ref_id,
+          submit_button_label: submit?.button?.label,
+          post_submit_text_still_present: submit?.post_submit_text_still_present,
+          candidate_submit_buttons: submit?.candidates.slice(0, 5),
+          attempted_submit_buttons: submit?.attempted_buttons?.slice(0, 5),
+        };
+        if (clipboardRestore.mode !== 'full' || clipboardRestore.error) {
+          result.clipboard_restore_mode = clipboardRestore.mode;
+          result.clipboard_restore_error = clipboardRestore.error;
+        }
+        return result;
       }
 
       richTextUnsafeFailure = true;
@@ -1062,20 +2068,28 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
 
     await strategy.run();
     await new Promise((r) => setTimeout(r, 180));
-    let status = await inspectAtomicType(tabId, token, args.text);
+    let status = await inspectAtomicType(tabId, token, args.text, preparation.snapshots, !!args.submit);
     status.tried = [...tried, ...status.tried];
 
     if (status.ok) {
-      if (args.submit) await cdp.pressKey(tabId, 'Enter');
+      const submit = args.submit ? await submitCurrentEditor(tabId, token, tried) : null;
+      const context = await getTabContext(tabId);
       return {
         typed_chars: args.text.length,
-        submitted: !!args.submit,
+        submitted: submit ? submit.submitted && !submit.post_submit_text_still_present : false,
         verified: true,
         strategy: strategy.name,
         target_kind: status.target_kind,
         scope_kind: status.scope_kind,
-        submit_button_disabled: false,
+        submit_button_disabled: submit?.button?.disabled ?? status.submit_button_disabled ?? false,
         actual_text_preview: (status.actual_text || '').slice(0, 160),
+        ...context,
+        submit_method: submit?.method,
+        submit_button_ref: submit?.button?.ref_id,
+        submit_button_label: submit?.button?.label,
+        post_submit_text_still_present: submit?.post_submit_text_still_present,
+        candidate_submit_buttons: submit?.candidates.slice(0, 5),
+        attempted_submit_buttons: submit?.attempted_buttons?.slice(0, 5),
       } satisfies TypeResult;
     }
 
@@ -1095,10 +2109,10 @@ async function typeText(sessionId: string, args: { ref_id?: string; text: string
   const preview = (status?.actual_text || lastPreparation?.actual_text || '').slice(0, 160);
   const residue = (status?.residue_preview || '').slice(0, 160);
   if (richTextUnsafeFailure) {
-    await markRichTextDirty(tabId, sessionId, status?.error || '富文本输入验证失败');
+    await markRichTextDirty(tabId, sessionId, status?.error || 'Rich-text input validation failed');
   }
   throw new Error(
-    `输入失败：${status?.error || typedTextError({ actual_text: preview }, args.text) || '目标编辑器没有包含要输入的文本'}。target=${status?.target_kind || lastPreparation?.target_kind || 'none'}; scope=${status?.scope_kind || lastPreparation?.scope_kind || 'none'}; rollback=${status?.rollback ?? false}; residue="${residue}"; tried=${tried.join(', ')}; actual="${preview}"`,
+    `Type failed: ${status?.error || typedTextError({ actual_text: preview }, args.text) || 'target editor does not contain the text to input'}. target=${status?.target_kind || lastPreparation?.target_kind || 'none'}; scope=${status?.scope_kind || lastPreparation?.scope_kind || 'none'}; rollback=${status?.rollback ?? false}; residue="${residue}"; tried=${tried.join(', ')}; actual="${preview}"`,
   );
 }
 
@@ -1143,6 +2157,68 @@ async function screenshotTool(sessionId: string, _args: Record<string, unknown>)
   return shot;
 }
 
+async function visualInspect(sessionId: string, args: VisualInspectArgs) {
+  const tabId = await getCurrentTab(sessionId);
+  const tab = await chrome.tabs.get(tabId);
+  const scope = args.scope || (args.ref_id ? 'element' : 'viewport');
+  const question = args.question?.trim() || 'Describe the visible browser page. Include visible text, UI state, and anything important for deciding the next browser action.';
+  let clip: { x: number; y: number; width: number; height: number; scale: number } | undefined;
+
+  if (scope === 'element') {
+    if (!args.ref_id) throw new Error('visual_inspect scope="element" requires ref_id');
+    await ensureA11yInjected(tabId);
+    const clipResult = await runInPage<{
+      ok?: boolean;
+      error?: string;
+      clip?: { x: number; y: number; width: number; height: number; scale: number };
+    }>(
+      tabId,
+      (targetRef) => {
+        const ref = window.__hermesElementMap[targetRef];
+        const node = ref && ref.deref ? ref.deref() : null;
+        if (!(node instanceof Element)) return { ok: false, error: 'ref_id not found' };
+        node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+        const rect = node.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return { ok: false, error: 'target element has no visible box' };
+        const pad = 12;
+        const doc = document.documentElement;
+        const maxWidth = Math.max(doc.scrollWidth, document.body?.scrollWidth || 0, window.innerWidth);
+        const maxHeight = Math.max(doc.scrollHeight, document.body?.scrollHeight || 0, window.innerHeight);
+        const x = Math.max(0, window.scrollX + rect.left - pad);
+        const y = Math.max(0, window.scrollY + rect.top - pad);
+        const width = Math.min(maxWidth - x, rect.width + pad * 2);
+        const height = Math.min(maxHeight - y, rect.height + pad * 2);
+        return {
+          ok: true,
+          clip: {
+            x: Math.round(x),
+            y: Math.round(y),
+            width: Math.max(1, Math.round(width)),
+            height: Math.max(1, Math.round(height)),
+            scale: 1,
+          },
+        };
+      },
+      [args.ref_id],
+    );
+    if (!clipResult.ok || !clipResult.clip) throw new Error(clipResult.error || 'failed to resolve visual_inspect element clip');
+    clip = clipResult.clip;
+    await sleep(200);
+  }
+
+  const shot = await cdp.screenshot(tabId, 'jpeg', clip);
+  return {
+    ...shot,
+    question,
+    scope,
+    ref_id: args.ref_id,
+    clip,
+    tabId,
+    url: tab.url || '',
+    title: tab.title || '',
+  };
+}
+
 async function fetchUrl(_sessionId: string, args: { url: string }) {
   if (!args.url) return { error: 'url argument is required' };
   try {
@@ -1157,7 +2233,7 @@ async function fetchUrl(_sessionId: string, args: { url: string }) {
     const html = await r.text();
     return { url: r.url, status: r.status, content_type: ct, html: html.slice(0, 100_000) };
   } catch (e) {
-    return { error: `fetch 失败: ${e instanceof Error ? e.message : String(e)}`, url: args.url };
+    return { error: `fetch failed: ${e instanceof Error ? e.message : String(e)}`, url: args.url };
   }
 }
 
@@ -1196,19 +2272,93 @@ async function pressKey(sessionId: string, args: { key: string }) {
     if (p === 'Shift') modifiers |= 8;
   }
   await cdp.pressKey(tabId, mainKey, undefined, modifiers);
-  return { pressed: args.key };
+  return { pressed: args.key, ...(await getTabContext(tabId)) };
 }
 
-async function getConsoleLogs(sessionId: string, args: { level?: string; limit?: number }) {
-  const tabId = await getCurrentTab(sessionId);
-  const lvl = args.level ?? 'all';
-  const lim = Math.max(1, Math.min(100, args.limit ?? 30));
-  const logs = await runInPage<unknown[]>(tabId, (level, limit) => {
-    const buf = (window as any).__hermesConsoleBuffer || [];
-    const filtered = level === 'all' ? buf : buf.filter((x: any) => x.level === level);
-    return filtered.slice(-limit);
-  }, [lvl, lim]).catch(() => []);
-  return { logs, filter: lvl };
+async function getConsoleLogs(sessionId: string, args: { tabId?: number; level?: string; limit?: number }) {
+  const current = getSessionTab(sessionId);
+  if (args.tabId != null) bindSessionToTab(sessionId, args.tabId);
+  try {
+    const tabId = await getCurrentTab(sessionId);
+    const lim = Math.max(1, Math.min(200, args.limit ?? 30));
+    const level = typeof args.level === 'string' ? args.level.toLowerCase() : 'all';
+    const normalizedLevel = (['log', 'info', 'warn', 'error', 'debug', 'all'] as const).includes(level as any)
+      ? (level as 'log' | 'info' | 'warn' | 'error' | 'debug' | 'all')
+      : 'all';
+    const cdpLogs = await cdp.readConsoleLogs(tabId, normalizedLevel, lim).catch(() => []);
+
+    const fallback = await runInPage<unknown[]>(tabId, (fallbackLevel, fallbackLimit) => {
+      const buf = (window as any).__hermesConsoleBufferMain || [];
+      const filtered = fallbackLevel === 'all' ? buf : buf.filter((x: any) => x.level === fallbackLevel);
+      return filtered.slice(-fallbackLimit);
+    }, [normalizedLevel, lim], 'MAIN').catch(() => []);
+    const fallbackLogs = Array.isArray(fallback)
+      ? fallback.map((item: any) => ({
+          timestamp: typeof item?.ts === 'number' ? item.ts : Date.now(),
+          level: typeof item?.level === 'string' ? item.level : 'log',
+          source: 'fallback-main',
+          text: String(item?.msg ?? item?.message ?? ''),
+          argsPreview: String(item?.msg ?? item?.message ?? ''),
+        }))
+      : [];
+    const logs = [...cdpLogs, ...fallbackLogs]
+      .sort((a: any, b: any) => (a.timestamp || 0) - (b.timestamp || 0))
+      .slice(-lim);
+    const source = cdpLogs.length && fallbackLogs.length
+      ? 'cdp+fallback'
+      : cdpLogs.length
+        ? 'cdp'
+        : 'fallback';
+    return { logs, tabId, filter: normalizedLevel, source };
+  } finally {
+    if (current != null) bindSessionToTab(sessionId, current);
+  }
+}
+
+async function readNetworkRequests(sessionId: string, args: NetworkArgs) {
+  const current = getSessionTab(sessionId);
+  if (args.tabId != null) bindSessionToTab(sessionId, args.tabId);
+  try {
+    const tabId = await getCurrentTab(sessionId);
+    const logs = await cdp.readNetworkRequests(tabId, {
+      filter: args.filter,
+      limit: args.limit,
+      includeHeaders: args.includeHeaders,
+      includeFailed: args.includeFailed,
+      includeBody: args.includeBody,
+    });
+    return { tabId, requests: logs };
+  } finally {
+    if (current != null) bindSessionToTab(sessionId, current);
+  }
+}
+
+async function closeTab(sessionId: string, args: CloseTabArgs) {
+  const prev = getSessionTab(sessionId);
+  const state = sessionStates.get(sessionId);
+  const current = state?.currentTabId;
+  const targetTabId = args.tabId ?? current;
+  if (!targetTabId) throw new Error('No active tab to close');
+
+  const ownerSession = tg.getSessionByTab(targetTabId);
+  const isOwnTab = ownerSession != null && ownerSession === sessionId;
+  if (!isOwnTab && !args.force && args.tabId == null) {
+    throw new Error('close_tab: refusing to close current non-Hermes tab. Pass force=true to close explicitly.');
+  }
+  if (!isOwnTab && !args.force) {
+    throw new Error('close_tab: refusing to close non-Hermes-managed tab. Pass force=true to close explicitly.');
+  }
+  await chrome.tabs.remove(targetTabId);
+
+  if (state && state.currentTabId === targetTabId) {
+    const rest = (await tg.listSessionTabs(sessionId).catch(() => [])).filter((id) => id !== targetTabId);
+    if (rest.length > 0) {
+      state.currentTabId = rest[0];
+      bindSessionToTab(sessionId, rest[0]);
+    }
+  }
+  if (prev != null && prev !== targetTabId) bindSessionToTab(sessionId, prev);
+  return { action: 'close_tab', closed_tab_id: targetTabId, tabId: current, force: !!args.force };
 }
 
 async function tabsContext(sessionId: string, _args: Record<string, unknown>) {
@@ -1237,6 +2387,7 @@ async function findElement(sessionId: string, args: { query: string; tabId?: num
   const prevTabId = getSessionTab(sessionId);
   if (args.tabId != null) bindSessionToTab(sessionId, args.tabId);
   try {
+    const tabId = await getCurrentTab(sessionId);
     const page = await readPage(sessionId, { filter: 'all', depth: 15 }) as A11yTree & { url?: string; title?: string };
     if (page.error) return page;
     const terms = args.query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -1248,6 +2399,39 @@ async function findElement(sessionId: string, args: { query: string; tabId?: num
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map(({ line, ref_id, score }) => ({ ref_id, score, line: line.trim() }));
+    if (matches.length < limit) {
+      const seenRefs = new Set(matches.map((match) => match.ref_id));
+      const dom = await scanInteractiveTargets(tabId, 80).catch(() => null);
+      const queryLooksForSubmit = /(发送|发布|提交|评论|回复|send|submit|post|comment|reply)/i.test(args.query);
+      const domMatches = dom
+        ? [...dom.editables, ...dom.clickables]
+          .filter((target) => !seenRefs.has(target.ref_id))
+          .map((target) => {
+            const inferredSubmit = queryLooksForSubmit
+              && target.kind === 'clickable'
+              && !!target.hasSvg
+              && (target.nearestEditableDistance ?? 9999) < 260;
+            const line = [
+              target.kind === 'editable' ? 'dom_editable' : 'dom_clickable',
+              `"${[target.label, target.placeholder, target.text].filter(Boolean).join(' ').replace(/"/g, '\\"')}"`,
+              `[${target.ref_id}]`,
+              `tag=${target.tag}`,
+              `role=${target.role}`,
+              target.hasSvg ? 'svg icon' : '',
+              target.disabled ? 'disabled' : '',
+              target.nearestEditableRef ? `near=${target.nearestEditableRef}` : '',
+              inferredSubmit ? 'possible submit send 发送 发布 评论' : '',
+              target.notes?.join(' ') || '',
+            ].filter(Boolean).join(' ');
+            return { line, ref_id: target.ref_id, score: scoreA11yLine(line, terms) + (inferredSubmit ? 8 : 0) };
+          })
+          .filter((target) => target.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, limit - matches.length)
+          .map(({ line, ref_id, score }) => ({ ref_id, score, line }))
+        : [];
+      matches.push(...domMatches);
+    }
     return { query: args.query, count: matches.length, matches, url: page.url, title: page.title };
   } finally {
     if (args.tabId != null && prevTabId != null) bindSessionToTab(sessionId, prevTabId);
@@ -1269,23 +2453,28 @@ async function saveToLocal(
   const overwrite = args.overwrite === true;
 
   const resp = await new Promise<any>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('save_to_local timed out after 60s (large file or hung host)'));
+    }, 60_000);
     try {
       chrome.runtime.sendNativeMessage(
         'com.hermes.filewriter',
         { op: 'write', path: args.path, content: args.content, encoding, create_dirs, overwrite },
         (response) => {
+          clearTimeout(timer);
           const err = chrome.runtime.lastError;
           if (err) return reject(new Error(err.message || String(err)));
           resolve(response);
         },
       );
     } catch (e) {
+      clearTimeout(timer);
       reject(e);
     }
   }).catch((e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `Native Messaging 调用失败：${msg}。请打开 Hermes sidepanel 顶部状态条按提示安装 host。`,
+      `Native Messaging call failed: ${msg}. Open the Hermes sidepanel and follow the status bar to install the host.`,
     );
   });
 
@@ -1317,6 +2506,11 @@ async function extractMarkdown(
           'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'TEMPLATE', 'SVG', 'CANVAS',
           'NAV', 'FOOTER', 'ASIDE', 'HEADER', 'FORM',
         ]);
+        const MAX_NODES = 50_000;
+        const MAX_TIME_MS = 8_000;
+        const startTime = performance.now();
+        let nodeCount = 0;
+        let walkTruncated = false;
 
         function isVisible(el: Element): boolean {
           const style = window.getComputedStyle(el as HTMLElement);
@@ -1358,6 +2552,12 @@ async function extractMarkdown(
         }
 
         function blockText(el: Element, depth: number): string[] {
+          if (walkTruncated) return [];
+          nodeCount++;
+          if (nodeCount > MAX_NODES || performance.now() - startTime > MAX_TIME_MS) {
+            walkTruncated = true;
+            return [];
+          }
           if (SKIP_TAGS.has(el.tagName) || !isVisible(el)) return [];
           const tag = el.tagName;
           if (/^H[1-6]$/.test(tag)) {
@@ -1421,8 +2621,9 @@ async function extractMarkdown(
         const root = document.querySelector('article, main, [role="main"]') || document.body;
         const lines = blockText(root as Element, 0);
         let markdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-        const truncated = markdown.length > limit;
-        if (truncated) markdown = markdown.slice(0, limit) + '\n\n…(truncated)';
+        const truncated = walkTruncated || markdown.length > limit;
+        if (markdown.length > limit) markdown = markdown.slice(0, limit) + '\n\n…(truncated)';
+        if (walkTruncated && markdown.length <= limit) markdown += '\n\n…(walk truncated)';
         return {
           url: location.href,
           title: document.title || '',
@@ -1456,7 +2657,12 @@ async function browserBatch(sessionId: string, args: { actions?: BatchAction[] }
       break;
     }
     try {
-      const data = await execute(sessionId, tool, input);
+      const data = await Promise.race([
+        execute(sessionId, tool, input),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`browser_batch action ${tool} timed out after 30s`)), 30_000),
+        ),
+      ]);
       results.push({ index: i, tool, ok: true, data });
     } catch (e) {
       results.push({ index: i, tool, ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -1470,17 +2676,25 @@ const TOOLS: Record<ToolName, (sessionId: string, args: any) => Promise<unknown>
   fetch_url: fetchUrl,
   tabs_context: tabsContext,
   read_page: readPage,
+  inspect_targets: inspectTargets,
   find: findElement,
   click: clickRef,
+  hover,
+  right_click: rightClick,
+  double_click: doubleClick,
+  drag,
   type: typeText,
   scroll,
   scroll_to: scrollTo,
   navigate,
   open_tab: openTab,
+  close_tab: closeTab,
   screenshot: screenshotTool,
+  visual_inspect: visualInspect,
   wait,
   browser_batch: browserBatch,
   get_console_logs: getConsoleLogs,
+  read_network_requests: readNetworkRequests,
   key: pressKey,
   save_to_local: saveToLocal,
   extract_markdown: extractMarkdown,

@@ -85,6 +85,22 @@ def _user_sensitive_paths() -> tuple:
     )
 
 
+def _safe_req_summary(req) -> dict:
+    """Return a safe version of the request without the content payload."""
+    if not isinstance(req, dict):
+        return {"type": type(req).__name__}
+    content = req.get("content")
+    content_len = len(content) if isinstance(content, str) else None
+    return {
+        "op": req.get("op"),
+        "path": req.get("path"),
+        "encoding": req.get("encoding"),
+        "create_dirs": req.get("create_dirs"),
+        "overwrite": req.get("overwrite"),
+        "content_chars": content_len,
+    }
+
+
 def log(line: str) -> None:
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -191,7 +207,7 @@ def main() -> None:
             resp = handle(req)
         except Exception as e:
             resp = {"ok": False, "error": str(e)}
-            log(f"[handle-error] {e} req={req!r}")
+            log(f"[handle-error] {e} req={_safe_req_summary(req)!r}")
         try:
             send_message(resp)
         except Exception as e:

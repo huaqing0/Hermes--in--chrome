@@ -5,13 +5,11 @@
 
 [← English version](./README.md)
 
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-blue.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
 
-> **License**: source-available under [PolyForm Noncommercial 1.0.0](./LICENSE).
-> Free for personal / educational / non-profit use.
-> **Commercial use** requires a separate license — see [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md).
+> **License**: [MIT](./LICENSE).
 
 ---
 
@@ -34,7 +32,12 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 
 ## 安装
 
-> 前提：已经装好 [Hermes Agent](https://github.com/huaqing0/hermes-agent)（默认装在 `~/.hermes/hermes-agent/`）。
+> 前提：已经装好 [Hermes Agent](https://github.com/huaqing0/hermes-agent) v0.2.0 及以上版本。启动 gateway 前需设置环境变量 `HERMES_IN_CHROME_BACKEND_PATH` 指向本仓库的 `backend/` 目录，例如：
+>
+> ```bash
+> export HERMES_IN_CHROME_BACKEND_PATH=/path/to/hermes-in-chrome/backend
+> hermes gateway run
+> ```
 
 三步走：
 
@@ -114,6 +117,23 @@ HERMES_AGENT_DIR=/path/to/hermes-agent npm run backend:ensure
 HERMES_GATEWAY_PORT=8642 npm run backend:ensure
 ```
 
+### Hermes Agent bridge 要求
+
+扩展的浏览器工具（`click`、`type`、`read_page` 等）依赖 Python bridge（`backend/browser_extension_tools.py`），此文件必须能被 Hermes Agent gateway import。内置启动器（`npm run backend:ensure`）会自动设置 `HERMES_IN_CHROME_BACKEND_PATH` 环境变量。
+
+**验证 bridge 是否可用：**
+
+```bash
+npm run check-bridge
+```
+
+此脚本检查：
+- Hermes gateway 在 `http://127.0.0.1:8642/health` 是否健康
+- `HERMES_IN_CHROME_BACKEND_PATH` 是否指向包含 `browser_extension_tools.py` 的目录
+- gateway 日志是否确认 bridge 已成功加载
+
+如果检查失败，重新运行 `npm run backend:ensure` 即可 — 它会自动将正确的路径传给 gateway。
+
 ## 主题
 
 侧边栏自带两套主题，header 第一个按钮切换：
@@ -167,12 +187,13 @@ MINIMAX_API_KEY=...
 
 核心浏览器工具：
 
-`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `screenshot` · `wait` · `browser_batch` · `get_console_logs` · `save_to_local` · `extract_markdown`
+`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `hover` · `right_click` · `double_click` · `drag` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `close_tab` · `screenshot` · `visual_inspect` · `wait` · `browser_batch` · `get_console_logs` · `read_network_requests` · `save_to_local` · `extract_markdown`
 
 - `read_page` 和 `ref_id` 操作走 `chrome.scripting.executeScript` 的 **isolated-world**，避免把 a11y tree 暴露到页面主世界
 - `browser_batch` 合并可预测的连续动作，减少工具调用 round-trip
 - `key` 支持 `Meta+Enter` 这类组合键，供 X / Twitter 等页面走键盘提交
-- `type` 对 X / YouTube 等富文本框会临时使用剪贴板粘贴整段文本，并在完成后恢复剪贴板；如果只能恢复纯文本，会在工具结果里标明 `clipboard_restore_mode`
+- `type` 对 X / YouTube 等富文本框会临时使用剪贴板粘贴整段文本，并在完成后恢复剪贴板；如果恢复时降级为纯文本或恢复失败，会在工具结果里标明 `clipboard_restore_mode`
+- `visual_inspect` 走真正的视觉通道：GPT / Claude / Gemini 等视觉主模型会收到真实图片；DeepSeek 等纯文本模型会走 Hermes `auxiliary.vision`，拿到短文字分析
 - `save_to_local` 通过本地 Native Messaging host 把任意文本/二进制内容写到本地任何用户可写位置（除系统目录和 `~/.ssh` 等敏感目录外），无需任何配置，需要先跑一次安装步骤；`extract_markdown` 把当前 Chrome 页面正文转 Markdown，常和 `save_to_local` 配合做"抓页面 + 落盘"
 
 ## 保存抓取内容到本地（Native Messaging）
@@ -198,7 +219,8 @@ MINIMAX_API_KEY=...
 
 - host 接受绝对路径并展开 `~`，可以写到用户文件系统下任何位置；系统目录（`/System`、`/usr` 等）和敏感用户目录（`~/.ssh`、`~/.aws`、浏览器 profile、`~/.zshrc` 等 shell rc）始终被拒绝，防止 prompt injection 取走凭据或劫持 shell
 - 默认拒绝覆盖已有文件；确实要覆盖时，工具调用必须显式传 `overwrite=true`
-- 单次写入最大 64 MB
+- Native Messaging 请求信封上限 64 MiB；base64 编码的二进制数据需留出编码膨胀空间，实际可写内容略小于 64 MB
+- host 返回的消息非常小，远低于 Chrome 对 native host→extension 方向的 1 MiB 限制
 - 日志写到 `~/.hermes/logs/hermes-filewriter.log`
 
 **典型调用**：
@@ -213,7 +235,7 @@ ext_screenshot()                      # 返回 base64
 
 ## 隐私与权限
 
-这个扩展是**本地优先**的。对话内容、页面 DOM、截图、API key —— 任何东西都**只发送到 `127.0.0.1:8642`**（你本机的 Hermes Agent）。你选的 LLM provider 收到的只是 Hermes 后端显式转发的部分。
+这个扩展是**本地优先**的。对话内容、页面 DOM、截图、API key —— 任何东西都**只发送到 `127.0.0.1:8642`**（你本机的 Hermes Agent）。你选的 LLM provider 收到的只是 Hermes 后端显式转发的部分。`visual_inspect` 会把截图发送给当前视觉 provider，或你配置的 Hermes `auxiliary.vision` provider。
 
 MV3 manifest 申请了下列权限，每个都有具体用途：
 
@@ -228,7 +250,7 @@ MV3 manifest 申请了下列权限，每个都有具体用途：
 | `webNavigation` | 检测 agent 驱动的页面什么时候加载完，再去读它 |
 | `alarms`, `offscreen` | 让 service worker 在 LLM 流式回复期间保持存活；offscreen document 承载剪贴板读写用于富文本输入 |
 | `notifications` | 长时间运行任务完成 / 出错时通知用户 |
-| `clipboardRead`, `clipboardWrite` | 在向 X / YouTube 等粘贴富文本前快照你的剪贴板，粘贴后恢复。**剪贴板内容永远不会离开本机。** 全 snapshot/restore 不支持时，结果里会标 `clipboard_restore_mode: 'text'` |
+| `clipboardRead`, `clipboardWrite` | 在向 X / YouTube 等粘贴富文本前快照你的剪贴板，粘贴后恢复。**剪贴板内容永远不会离开本机。** 全 snapshot/restore 不支持时，结果里会标 `clipboard_restore_mode: 'text'`；恢复失败时会标 `clipboard_restore_mode: 'failed'` |
 | `nativeMessaging` | 跟 `hermes-filewriter`（独立 Python 进程）通信以本地落盘。没装就无法用 `save_to_local` |
 | `host_permissions: <all_urls>` | agent 要在你指向的任何 URL 上操作；没法预先知道你会去哪些站 |
 
@@ -271,8 +293,6 @@ public/icons/         # 扩展图标
 
 ## License
 
-[PolyForm Noncommercial License 1.0.0](./LICENSE)
-
-商用授权见 [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md)。
+[MIT](./LICENSE)
 
 贡献指南见 [CONTRIBUTING.md](./CONTRIBUTING.md)。

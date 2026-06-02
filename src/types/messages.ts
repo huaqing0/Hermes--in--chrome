@@ -4,18 +4,26 @@ export type ToolName =
   | 'fetch_url'
   | 'tabs_context'
   | 'read_page'
+  | 'inspect_targets'
   | 'find'
   | 'click'
+  | 'hover'
+  | 'right_click'
+  | 'double_click'
+  | 'drag'
   | 'type'
   | 'key'
   | 'scroll'
   | 'scroll_to'
   | 'navigate'
   | 'open_tab'
+  | 'close_tab'
   | 'screenshot'
+  | 'visual_inspect'
   | 'wait'
   | 'browser_batch'
   | 'get_console_logs'
+  | 'read_network_requests'
   | 'save_to_local'
   | 'extract_markdown';
 
@@ -31,6 +39,8 @@ export interface ProviderRequest {
   model?: string;
   credentialOverride?: CredentialOverride;
   sessionId?: string;  // for provider_auth_poll
+  check?: 'text' | 'vision' | 'full';
+  vision?: true | false | 'unknown';
 }
 
 export interface ProviderStatus {
@@ -40,6 +50,10 @@ export interface ProviderStatus {
   authType?: string;
   message: string;
   hint?: string;
+  model?: string;
+  modelOk?: boolean;
+  visionOk?: boolean;
+  visionRoute?: 'native' | 'auxiliary' | 'native_or_auxiliary' | 'skipped' | 'unsupported' | 'error';
   loginUrl?: string;
   userCode?: string;
   sessionId?: string;     // from auth_start; UI passes back on poll
@@ -49,6 +63,7 @@ export interface ProviderStatus {
 export interface UserSettings {
   provider?: string;          // auto / deepseek / openai / anthropic / gemini / openrouter / custom ...
   model?: string;             // provider-specific model id; empty means backend default when provider='auto'
+  vision?: true | false | 'unknown'; // custom/local override for whether the active model can inspect images
   credentialOverride?: CredentialOverride; // local-only override sent to 127.0.0.1 backend; do not persist in history
   mode?: ExecMode;            // auto = 自动；approval = 逐工具审批；plan = 只读调研
   require_approval?: boolean; // 兼容老字段（true ≈ mode='approval'）

@@ -1,9 +1,9 @@
 {
   "name": "hermes-in-chrome",
   "version": "0.1.0",
-  "description": "Hermes Agent 住在 Chrome 里 — 浏览器自动化扩展。Source-available under PolyForm Noncommercial 1.0.0.",
+  "description": "Hermes Agent 住在 Chrome 里 — 浏览器自动化扩展。",
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "author": "花清",
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
     "backend:start": "node scripts/hermes-backend.mjs start",
     "backend:ensure": "node scripts/hermes-backend.mjs ensure",
     "backend:watch": "node scripts/hermes-backend.mjs watch",
+    "check-bridge": "node scripts/check-bridge.mjs",
     "native-host:install": "node scripts/install-native-host.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",

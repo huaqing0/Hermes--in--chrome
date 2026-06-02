@@ -22,5 +22,11 @@ __pycache__/
 *.swo
 .~lock.*
 
+# Design assets (not needed at runtime)
+design/
+
+# Internal review docs
+docs/open-source-readiness-*.md
+
 # OS
 Thumbs.db

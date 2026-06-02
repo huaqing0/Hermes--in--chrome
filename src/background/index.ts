@@ -1,15 +1,55 @@
 // Service Worker：多 Group 多 session 路由 + WebSocket + 工具执行
 
 import { ws } from './ws';
+import { GATEWAY_HEALTH_URL } from './gateway';
 import * as tools from './tools';
 import * as tg from './tabGroup';
-import type { ProviderRequest, ProviderStatus, SidepanelMessage, SwToSidepanelMessage } from '../types/messages';
-import { HISTORY_STORAGE_KEY, type StoredConversationMap } from '../types/history';
+import type { ExecMode, ProviderRequest, ProviderStatus, SidepanelMessage, SwToSidepanelMessage, ToolName, UserSettings } from '../types/messages';
+
 
 // === per-session 运行状态 ===
 type SessionMeta = { isRunning: boolean; mainTabId: number };
 const sessionsMeta = new Map<string, SessionMeta>();
+const sessionSettings = new Map<string, UserSettings>();
 const providerRequests = new Map<string, (status: ProviderStatus) => void>();
+const approvedToolCalls = new Set<string>();
+
+const WRITE_TOOLS = new Set<ToolName>([
+  'click',
+  'hover',
+  'right_click',
+  'double_click',
+  'drag',
+  'type',
+  'key',
+  'scroll',
+  'scroll_to',
+  'navigate',
+  'open_tab',
+  'close_tab',
+  'save_to_local',
+]);
+
+function toolApprovalKey(sessionId: string, callId: string): string {
+  return `${sessionId}:${callId}`;
+}
+
+function toolBlockedByMode(mode: ExecMode | undefined, sessionId: string, callId: string, tool: ToolName, _args: Record<string, unknown>): string | null {
+  if (mode === 'plan') {
+    if (tool === 'browser_batch') return 'Plan mode blocks browser_batch because it can contain write actions.';
+    if (WRITE_TOOLS.has(tool)) return `Plan mode blocks ${tool}.`;
+  }
+  if (mode === 'approval') {
+    const approvalKey = toolApprovalKey(sessionId, callId);
+    if (approvedToolCalls.has(approvalKey)) {
+      approvedToolCalls.delete(approvalKey);
+      return null;
+    }
+    if (tool === 'browser_batch') return 'Approval mode requires explicit approval before browser_batch.';
+    if (WRITE_TOOLS.has(tool)) return `Approval mode requires explicit approval before ${tool}.`;
+  }
+  return null;
+}
 
 // === 兼容旧 sidepanel：保留 currentSession，但严格按 active tab 派生 ===
 let currentSession: string | null = null;
@@ -178,19 +218,6 @@ async function selectSessionForTab(sessionId: string, tab: chrome.tabs.Tab): Pro
   return { sessionId, groupId: groupId ?? null };
 }
 
-async function deleteStoredHistoriesForGroup(groupId: number, sessionIds: string[]) {
-  const stored = await chrome.storage.local.get(HISTORY_STORAGE_KEY);
-  const conversations = (stored[HISTORY_STORAGE_KEY] as StoredConversationMap | undefined) || {};
-  let changed = false;
-  for (const [sid, conversation] of Object.entries(conversations)) {
-    if (conversation.groupId === groupId || sessionIds.includes(sid)) {
-      delete conversations[sid];
-      changed = true;
-    }
-  }
-  if (changed) await chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: conversations });
-}
-
 async function deleteStoredTabMappingsForSessions(sessionIds: string[]) {
   if (sessionIds.length === 0) return;
   const map = await getTabSessionMap();
@@ -213,6 +240,10 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     await setTabSessionMap(map);
     tools.clearSession(sid);
     sessionsMeta.delete(sid);
+    sessionSettings.delete(sid);
+    for (const key of Array.from(approvedToolCalls)) {
+      if (key.startsWith(`${sid}:`)) approvedToolCalls.delete(key);
+    }
     if (currentSession === sid) currentSession = null;
   }
 });
@@ -223,11 +254,14 @@ chrome.tabGroups.onRemoved.addListener((group) => {
     for (const sid of sessionIds) {
       tools.clearSession(sid);
       sessionsMeta.delete(sid);
+      sessionSettings.delete(sid);
+      for (const key of Array.from(approvedToolCalls)) {
+        if (key.startsWith(`${sid}:`)) approvedToolCalls.delete(key);
+      }
       if (currentSession === sid) currentSession = null;
     }
     await deleteStoredTabMappingsForSessions(sessionIds);
-    await deleteStoredHistoriesForGroup(group.id, sessionIds);
-  })().catch((e) => console.warn('[Hermes SW] 清理 group 历史失败', e));
+  })().catch((e) => console.warn('[Hermes SW] 清理 group 失败', e));
 });
 
 /** SW 启动时给所有已打开 tab 注入 content scripts */
@@ -305,6 +339,7 @@ chrome.runtime.onMessage.addListener((msg: SidepanelMessage, _sender, sendRespon
       if (meta) meta.isRunning = true;
       // 从 sidepanel 传来的消息里直接拿 settings（per-session）
       const settings = msg.settings || {};
+      sessionSettings.set(sid, settings);
       const sent = ws.send({
         type: 'user_message',
         session_id: sid,
@@ -375,6 +410,8 @@ chrome.runtime.onMessage.addListener((msg: SidepanelMessage, _sender, sendRespon
       }
       sendResponse({ ok: false, error: 'No active tab' });
     } else if (msg.type === 'SP_TOOL_APPROVAL') {
+      if (msg.approved) approvedToolCalls.add(toolApprovalKey(msg.session_id, msg.id));
+      else approvedToolCalls.delete(toolApprovalKey(msg.session_id, msg.id));
       ws.send({ type: 'tool_approval', id: msg.id, approved: msg.approved, session_id: msg.session_id });
       sendResponse({ ok: true });
     } else if (msg.type === 'SP_GET_STATUS') {
@@ -412,7 +449,7 @@ chrome.runtime.onMessage.addListener((msg: SidepanelMessage, _sender, sendRespon
     } else if (msg.type === 'SP_ONBOARDING_CHECK_BACKEND') {
       let status: 'healthy' | 'offline' = 'offline';
       try {
-        const r = await fetch('http://127.0.0.1:8642/health', {
+        const r = await fetch(GATEWAY_HEALTH_URL, {
           signal: AbortSignal.timeout(1500),
         });
         if (r.ok) status = 'healthy';
@@ -478,6 +515,13 @@ ws.on(async (msg) => {
     });
   } else if (msg.type === 'tool_call') {
     const sid = msg.session_id;
+    const mode = sessionSettings.get(sid)?.mode;
+    const blocked = toolBlockedByMode(mode, sid, msg.id, msg.tool, msg.args);
+    if (blocked) {
+      ws.send({ type: 'tool_error', id: msg.id, ok: false, error: blocked, session_id: sid });
+      relayToSidepanel({ type: 'SW_TOOL_RESULT', id: msg.id, ok: false, error: blocked, session_id: sid });
+      return;
+    }
     relayToSidepanel({ type: 'SW_TOOL_CALL', id: msg.id, tool: msg.tool, args: msg.args, session_id: sid });
     try {
       const data = await tools.execute(sid, msg.tool, msg.args);

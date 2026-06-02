@@ -75,7 +75,8 @@ function renderMd(text: string): { __html: string } {
 
 type ExecMode = 'auto' | 'approval' | 'plan';
 
-type ModelOption = { value: string; label: string; short: string };
+type VisionCapability = true | false | 'unknown';
+type ModelOption = { value: string; label: string; short: string; vision?: VisionCapability };
 type ProviderOption = {
   value: string;
   label: string;
@@ -84,6 +85,7 @@ type ProviderOption = {
   authType: 'api_key' | 'oauth' | 'custom' | 'backend_config';
   requiredFields?: Array<'apiKey' | 'baseUrl' | 'model'>;
   setupHint: string;
+  vision?: VisionCapability;
   models: ModelOption[];
 };
 type ProviderCredential = { apiKey?: string; baseUrl?: string };
@@ -106,6 +108,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     description: 'Use the Hermes backend\'s current model.provider / model.default config.',
     authType: 'backend_config',
     setupHint: 'Auto uses the Hermes backend\'s current default config.',
+    vision: 'unknown',
     models: [{ value: '', label: 'Hermes backend default', short: 'Default' }],
   },
   {
@@ -116,6 +119,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     authType: 'api_key',
     requiredFields: ['apiKey'],
     setupHint: 'Paste a DeepSeek API Key, or set DEEPSEEK_API_KEY in the backend env.',
+    vision: false,
     models: [
       { value: 'deepseek-chat', label: 'DeepSeek Chat', short: 'Chat' },
       { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner', short: 'Reasoner' },
@@ -131,6 +135,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     authType: 'api_key',
     requiredFields: ['apiKey'],
     setupHint: 'Paste an Anthropic API Key. If you do not have one, use OpenAI Codex OAuth or Custom (e.g. OpenRouter Base URL).',
+    vision: true,
     models: [
       { value: 'claude-opus-4-7', label: 'Claude Opus 4.7', short: 'Opus 4.7' },
       { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', short: 'Sonnet 4.6' },
@@ -146,6 +151,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     authType: 'api_key',
     requiredFields: ['apiKey'],
     setupHint: 'Paste a Google AI Studio API Key, or set GOOGLE_API_KEY / GEMINI_API_KEY in the backend env.',
+    vision: true,
     models: [
       { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', short: '3F' },
       { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', short: '3P' },
@@ -243,20 +249,23 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     authType: 'custom',
     requiredFields: ['baseUrl', 'model'],
     setupHint: 'Fill in an OpenAI-compatible Base URL and Model ID; API Key is optional.',
+    vision: 'unknown',
     models: [{ value: '', label: 'Custom model ID', short: 'Custom' }],
   },
   {
     value: 'openai-codex',
     label: 'OpenAI Codex OAuth',
     short: 'CODEX',
-    description: 'OpenAI Codex device-code OAuth provider.',
+    description: 'OpenAI Codex device-code OAuth provider. Coding-oriented models can be slower on long browser-operation sessions; start a new chat after switching models.',
     authType: 'oauth',
-    setupHint: 'Log in via OpenAI Codex OAuth — no API Key needed.',
+    setupHint: 'Log in via OpenAI Codex OAuth — no API Key needed. For browser automation, prefer a fresh chat after switching into this provider.',
+    vision: true,
     models: [
       { value: 'gpt-5.5', label: 'GPT-5.5', short: '5.5' },
       { value: 'gpt-5.4', label: 'GPT-5.4', short: '5.4' },
       { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', short: '5.4M' },
       { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', short: '5.3C' },
+      { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark', short: '5.3S' },
       { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', short: '5.2C' },
       { value: 'gpt-5.2', label: 'GPT-5.2', short: '5.2' },
       { value: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max', short: '5.1CM' },
@@ -270,6 +279,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     description: 'Google Gemini CLI / Cloud Code OAuth provider.',
     authType: 'oauth',
     setupHint: 'Uses Google Gemini OAuth — usually requires completing the Gemini CLI login on this machine first.',
+    vision: true,
     models: [
       { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', short: '3F' },
       { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview', short: '3P' },
@@ -299,14 +309,15 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     ],
   },
 ];
-type ModeKey = 'mode_auto' | 'mode_plan';
-type ModeShortKey = 'mode_auto_short' | 'mode_plan_short';
+type ModeKey = 'mode_auto' | 'mode_approval' | 'mode_plan';
+type ModeShortKey = 'mode_auto_short' | 'mode_approval_short' | 'mode_plan_short';
 const MODE_OPTIONS: { value: ExecMode; labelKey: ModeKey; shortKey: ModeShortKey; icon: string }[] = [
   { value: 'auto', labelKey: 'mode_auto', shortKey: 'mode_auto_short', icon: '🤖' },
+  { value: 'approval', labelKey: 'mode_approval', shortKey: 'mode_approval_short', icon: '🔐' },
   { value: 'plan', labelKey: 'mode_plan', shortKey: 'mode_plan_short', icon: '📋' },
 ];
 // placeholder text is built per render from i18n inside App, no module-level dict needed
-const DEFAULT_SETTINGS: UserSettings = { provider: 'auto', model: '', mode: 'auto' };
+const DEFAULT_SETTINGS: UserSettings = { provider: 'auto', model: '', vision: 'unknown', mode: 'auto' };
 const CREDENTIAL_STORAGE_KEY = 'hermes_provider_credentials_v1';
 const settingsBySession: Record<string, UserSettings> = {};
 
@@ -347,14 +358,30 @@ function defaultModelForProvider(providerValue?: string): string {
   return providerByValue(providerValue).models[0]?.value || '';
 }
 
+function normalizeVisionCapability(value: unknown): VisionCapability | undefined {
+  if (value === true || value === false || value === 'unknown') return value;
+  return undefined;
+}
+
+function defaultVisionForProvider(providerValue?: string, modelValue?: string): VisionCapability {
+  const provider = providerByValue(providerValue);
+  const model = provider.models.find((m) => m.value === (modelValue || ''));
+  return model?.vision ?? provider.vision ?? 'unknown';
+}
+
 function normalizeSettings(raw?: UserSettings): UserSettings {
   const provider = raw?.provider || inferProviderFromModel(raw?.model);
   const model = raw?.model ?? defaultModelForProvider(provider);
-  const requestedMode = raw?.mode || (raw?.require_approval ? 'auto' : 'auto');
-  const mode = requestedMode === 'plan' ? 'plan' : 'auto';
+  const requestedMode: ExecMode = raw?.mode || (raw?.require_approval ? 'approval' : 'auto');
+  const mode: ExecMode =
+    requestedMode === 'plan' ? 'plan' :
+    requestedMode === 'approval' ? 'approval' :
+    'auto';
+  const vision = normalizeVisionCapability(raw?.vision) ?? defaultVisionForProvider(provider, model);
   return {
     provider,
     model: provider === 'auto' ? (model || '') : model,
+    vision,
     mode,
     require_approval: raw?.require_approval,
   };
@@ -386,8 +413,17 @@ async function readConversations(): Promise<StoredConversationMap> {
   return (stored[HISTORY_STORAGE_KEY] as StoredConversationMap | undefined) || {};
 }
 
+const MAX_STORED_CONVERSATIONS = 100;
+
+function pruneConversations(conversations: StoredConversationMap): StoredConversationMap {
+  const entries = Object.entries(conversations)
+    .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
+    .slice(0, MAX_STORED_CONVERSATIONS);
+  return Object.fromEntries(entries);
+}
+
 async function writeConversations(conversations: StoredConversationMap): Promise<void> {
-  await chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: conversations });
+  await chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: pruneConversations(conversations) });
 }
 
 function historyTitle(entries: Entry[], fallback: string, existing?: string): string {
@@ -807,7 +843,8 @@ export default function App() {
   }
 
   function updateProvider(provider: string) {
-    updateSettings({ provider, model: defaultModelForProvider(provider) });
+    const model = defaultModelForProvider(provider);
+    updateSettings({ provider, model, vision: defaultVisionForProvider(provider, model) });
   }
 
   function buildSubmitSettings(base: UserSettings): UserSettings {
@@ -858,6 +895,7 @@ export default function App() {
     return {
       provider,
       model: settings.model,
+      vision: settings.vision,
       ...(apiKey || baseUrl
         ? { credentialOverride: { ...(apiKey ? { apiKey } : {}), ...(baseUrl ? { baseUrl } : {}) } }
         : {}),
@@ -902,7 +940,28 @@ export default function App() {
   }
 
   async function validateProvider() {
-    const request = buildProviderRequest();
+    const request = buildProviderRequest({ check: 'text' });
+    const checkedKey = checkedKeyForRequest(request);
+    setProviderBusy(true);
+    setProviderBanner(null);
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        type: 'SP_PROVIDER_VALIDATE',
+        request,
+      } satisfies SidepanelMessage);
+      if (resp?.status) {
+        setProviderStatus(resp.status);
+        setProviderStatusCheckedKey(checkedKey);
+      }
+    } catch (e) {
+      setProviderBanner(`${t('banner_validate_failed')}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setProviderBusy(false);
+    }
+  }
+
+  async function validateVision() {
+    const request = buildProviderRequest({ check: 'vision' });
     const checkedKey = checkedKeyForRequest(request);
     setProviderBusy(true);
     setProviderBanner(null);
@@ -1417,7 +1476,13 @@ export default function App() {
     value: settings.model || '',
     label: settings.model || currentProvider.models[0]?.label || 'Hermes backend default',
     short: shortModelLabel(settings.model || ''),
+    vision: settings.vision ?? currentProvider.vision ?? 'unknown',
   };
+  const currentVision = settings.vision ?? currentModel.vision ?? currentProvider.vision ?? 'unknown';
+  const visionLabel =
+    currentVision === true ? t('settings_vision_true')
+      : currentVision === false ? t('settings_vision_false')
+        : t('settings_vision_unknown');
   const modelSelectValue = currentProvider.models.some((m) => m.value === (settings.model || ''))
     ? (settings.model || '')
     : '__custom__';
@@ -1485,7 +1550,7 @@ export default function App() {
               <div className="logo-text">
                 <div className="logo-name">HERMES</div>
                 <div className="logo-sub">
-                  {theme === 'synthwave' ? '// SYNTHWAVE_84' : 'Ἑρμῆς · ψυχοπομπός'}
+                  {theme === 'synthwave' ? '// SYNTHWAVE_84' : 'Odyssey Console'}
                 </div>
                 <div className="logo-meta">
                   <span className="ver">v0.3</span>
@@ -1499,20 +1564,30 @@ export default function App() {
               </div>
             </div>
             <div className="header-actions">
-              <button className={`icon-btn ${settingsOpen ? 'active' : ''}`} title={t('header_settings')} onClick={() => setSettingsOpen((v) => !v)}>⚙</button>
+              <div className="action-help" aria-hidden="true">
+                <span>⚙ {t('header_settings_short')}</span>
+                <span>◐ {t('header_theme_short')}</span>
+                <span>EN {t('header_lang_short')}</span>
+                <span>◷ {t('header_history_short')}</span>
+                <span>⤓ {t('header_export_short')}</span>
+                <span>+ {t('header_new_chat_short')}</span>
+              </div>
+              <button className={`icon-btn ${settingsOpen ? 'active' : ''}`} title={t('header_settings')} aria-label={t('header_settings')} onClick={() => setSettingsOpen((v) => !v)}>⚙</button>
               <button
                 className="icon-btn theme-toggle"
                 title={theme === 'dystopia' ? t('header_theme_to_synthwave') : t('header_theme_to_dystopia')}
+                aria-label={theme === 'dystopia' ? t('header_theme_to_synthwave') : t('header_theme_to_dystopia')}
                 onClick={toggleTheme}
               >{theme === 'dystopia' ? '◐' : '◑'}</button>
               <button
                 className="icon-btn lang-toggle"
                 title={t('header_lang_toggle')}
+                aria-label={t('header_lang_toggle')}
                 onClick={toggleLang}
               >{lang === 'zh' ? 'EN' : '中'}</button>
-              <button className={`icon-btn ${historyOpen ? 'active' : ''}`} title={t('header_history')} onClick={() => { setHistoryOpen((v) => !v); refreshHistory().catch(() => {}); }}>◷</button>
-              <button className="icon-btn" title={t('header_export_md')} onClick={exportConversation} disabled={entries.length === 0}>⤓</button>
-              <button className="icon-btn" title={t('header_new_chat')} onClick={newChat}>+</button>
+              <button className={`icon-btn ${historyOpen ? 'active' : ''}`} title={t('header_history')} aria-label={t('header_history')} onClick={() => { setHistoryOpen((v) => !v); refreshHistory().catch(() => {}); }}>◷</button>
+              <button className="icon-btn" title={t('header_export_md')} aria-label={t('header_export_md')} onClick={exportConversation} disabled={entries.length === 0}>⤓</button>
+              <button className="icon-btn" title={t('header_new_chat')} aria-label={t('header_new_chat')} onClick={newChat}>+</button>
             </div>
           </div>
           <div className="system-bar" aria-hidden="true">
@@ -1561,12 +1636,30 @@ export default function App() {
               <input
                 value={settings.model || ''}
                 placeholder={currentProvider.value === 'auto' ? t('settings_model_id_placeholder_auto') : currentProvider.models[0]?.value || 'model-id'}
-                onChange={(e) => updateSettings({ model: e.target.value })}
+                onChange={(e) => updateSettings({
+                  model: e.target.value,
+                  vision: currentProvider.value === 'custom'
+                    ? (settings.vision ?? 'unknown')
+                    : defaultVisionForProvider(currentProvider.value, e.target.value),
+                })}
               />
             </label>
             <div className="settings-note">
               {t('settings_local_note')}
             </div>
+            <div className="settings-note">
+              {t('settings_vision_status')}: <strong>{visionLabel}</strong>. {t('settings_vision_note')}
+            </div>
+            {currentProvider.value === 'custom' && (
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={settings.vision === true}
+                  onChange={(e) => updateSettings({ vision: e.target.checked ? true : 'unknown' })}
+                />
+                <span>{t('settings_custom_vision')}</span>
+              </label>
+            )}
             <label className="settings-field">
               <span>{t('settings_api_key')}</span>
               <input
@@ -1605,8 +1698,11 @@ export default function App() {
                   <button onClick={() => refreshProviderStatus()} disabled={providerBusy}>{t('settings_refresh')}</button>
                 </div>
                 <div className="provider-actions">
-                  {currentProvider.authType === 'api_key' && (
-                    <button onClick={validateProvider} disabled={providerBusy}>{t('settings_test_conn')}</button>
+                  {currentProvider.authType !== 'backend_config' && (
+                    <button onClick={validateProvider} disabled={providerBusy}>{t('settings_test_model')}</button>
+                  )}
+                  {currentProvider.authType !== 'backend_config' && (
+                    <button onClick={validateVision} disabled={providerBusy}>{t('settings_test_vision')}</button>
                   )}
                   {currentProvider.authType === 'oauth' && !oauthSession && (
                     <button onClick={startProviderAuth} disabled={providerBusy}>
@@ -1902,7 +1998,7 @@ export default function App() {
                 value={modelSelectValue}
                 onChange={(e) => {
                   if (e.target.value === '__custom__') return;
-                  updateSettings({ model: e.target.value });
+                  updateSettings({ model: e.target.value, vision: defaultVisionForProvider(settings.provider || 'auto', e.target.value) });
                 }}
               >
                 {currentProvider.models.map(o => (
@@ -1914,11 +2010,19 @@ export default function App() {
               </select>
               <span className="chip-caret">▾</span>
             </label>
+            <span
+              className={`vision-pill ${
+                currentVision === true ? 'vision-on' : currentVision === false ? 'vision-off' : 'vision-unknown'
+              }`}
+              title={t('settings_vision_note')}
+            >
+              {visionLabel}
+            </span>
             <div className="toolbar-spacer" />
             {running
               ? <button className="stop-fab" onClick={stop} title={t('input_stop')}>■</button>
               : <button className="send-fab" onClick={submit} disabled={!draft.trim() || !connected} title={`${t('input_send')} (⌘↩)`}>
-                  {theme === 'synthwave' ? <>SEND <span className="send-arrow">▸</span></> : 'EXEC'}
+                  {theme === 'synthwave' ? <>SEND <span className="send-arrow">▸</span></> : '›'}
                 </button>
             }
           </div>

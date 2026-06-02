@@ -285,6 +285,7 @@ body {
   align-items: center;
   gap: 14px;
   flex-shrink: 0;
+  min-width: 0;
 }
 [data-theme="dystopia"] .header { border-bottom: 1px solid var(--yellow-soft); }
 [data-theme="synthwave"] .header { border-bottom: 1px solid rgba(255, 0, 255, 0.3); }
@@ -431,7 +432,7 @@ body {
     inset 0 0 0 1px var(--cyan);
 }
 
-.logo-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.logo-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow: hidden; }
 .logo-name {
   font-family: var(--f-display);
   font-weight: 700;
@@ -439,6 +440,9 @@ body {
   letter-spacing: 0.18em;
   line-height: 1;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 [data-theme="synthwave"] .logo-name {
   text-shadow:
@@ -451,6 +455,9 @@ body {
   font-size: 10px;
   letter-spacing: 0.2em;
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 [data-theme="dystopia"] .logo-sub {
   font-family: var(--f-serif);
@@ -476,9 +483,11 @@ body {
   font-size: 9.5px;
   letter-spacing: 0.12em;
   color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
 }
 .logo-meta .ver,
-.logo-meta .model { color: var(--text-muted); }
+.logo-meta .model { color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logo-meta .sep { opacity: 0.4; }
 .logo-meta .status {
   display: inline-flex;
@@ -505,9 +514,63 @@ body {
 .header-actions {
   margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
   align-items: center;
   flex-shrink: 0;
+  max-width: 198px;
+  position: relative;
+  overflow: visible;
+}
+.action-help {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 6px 10px;
+  width: max-content;
+  max-width: min(248px, calc(100vw - 28px));
+  padding: 9px 10px;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.header-actions:hover .action-help,
+.header-actions:focus-within .action-help {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.action-help span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+[data-theme="dystopia"] .action-help {
+  border: 1px solid rgba(240, 207, 122, 0.58);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 248, 225, 0.96), rgba(232, 210, 166, 0.94));
+  color: #5d3910;
+  box-shadow:
+    0 12px 28px rgba(76, 43, 10, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.46);
+}
+[data-theme="synthwave"] .action-help {
+  border: 1px solid var(--cyan);
+  border-radius: 6px;
+  background: rgba(26, 0, 51, 0.96);
+  color: var(--cyan);
+  box-shadow: 0 0 14px rgba(0, 255, 255, 0.28);
 }
 .icon-btn {
   width: 28px; height: 28px;
@@ -1009,7 +1072,7 @@ body {
 .composer-toolbar {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
   min-width: 0;
@@ -1041,6 +1104,7 @@ body {
   white-space: nowrap;
   flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 .chip select {
   appearance: none;
@@ -1056,13 +1120,29 @@ body {
   cursor: pointer;
   max-width: 180px;
   min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chip.mode select { max-width: 120px; }
-.chip.provider-chip { flex: 0 1 190px; }
+.chip.provider-chip { flex: 1 1 118px; }
 .chip.provider-chip select { width: 100%; max-width: 170px; }
-.chip.model-chip { flex: 0 1 250px; }
+.chip.model-chip { flex: 1 1 118px; }
 .chip.model-chip select { width: 100%; max-width: 230px; }
+.vision-pill {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 4px 7px;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+.vision-pill.vision-on { color: var(--cyan); border-color: var(--cyan); }
+.vision-pill.vision-off { color: var(--text-dim); }
+.vision-pill.vision-unknown { color: var(--yellow); border-color: rgba(255, 230, 0, 0.45); }
 .chip .chip-caret { font-size: 8px; opacity: 0.6; }
 
 [data-theme="dystopia"] .chip {
@@ -1107,6 +1187,11 @@ body {
   padding: 6px 14px;
   height: 30px;
   flex-shrink: 0;
+  margin-left: auto;
+  min-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 [data-theme="dystopia"] .send-fab {
   background: var(--yellow);
@@ -1146,6 +1231,109 @@ body {
   cursor: not-allowed;
 }
 .send-fab .send-arrow { font-size: 11px; line-height: 1; }
+
+@media (max-width: 430px) {
+  .header {
+    padding: 18px 18px 12px;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .avatar {
+    width: 38px;
+    height: 38px;
+  }
+  .logo {
+    gap: 9px;
+  }
+  .logo-name {
+    font-size: 18px;
+    letter-spacing: 0.12em;
+  }
+  .logo-sub {
+    letter-spacing: 0.1em;
+  }
+  [data-theme="synthwave"] .logo-sub {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+  }
+  .logo-meta {
+    gap: 5px;
+    font-size: 8.5px;
+    letter-spacing: 0.08em;
+  }
+  .header-actions {
+    max-width: 102px;
+    gap: 5px;
+  }
+  .icon-btn {
+    width: 26px;
+    height: 26px;
+  }
+  .feed {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .tab-meta {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
+  .composer {
+    padding: 10px 14px 12px;
+  }
+  .input-wrap {
+    padding: 9px 10px;
+  }
+  .composer-toolbar {
+    gap: 6px;
+  }
+  .chip {
+    padding: 4px 8px;
+    letter-spacing: 0.06em;
+  }
+  [data-theme="synthwave"] .chip {
+    font-size: 11px;
+  }
+  .chip.mode {
+    max-width: 100%;
+  }
+  .chip.mode select {
+    max-width: 180px;
+  }
+  .chip.provider-chip,
+  .chip.model-chip {
+    flex: 1 1 calc(50% - 3px);
+  }
+  .vision-pill {
+    font-size: 8.5px;
+    padding: 4px 6px;
+  }
+  .send-fab {
+    min-width: 76px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
+
+@media (max-width: 360px) {
+  .header {
+    flex-wrap: wrap;
+  }
+  .logo {
+    flex-basis: 100%;
+  }
+  .header-actions {
+    max-width: none;
+    margin-left: 47px;
+  }
+  .chip.provider-chip,
+  .chip.model-chip {
+    flex-basis: 100%;
+  }
+  .send-fab {
+    width: 100%;
+    margin-left: 0;
+  }
+}
 
 .stop-fab {
   border: none;
@@ -1323,6 +1511,21 @@ body {
 }
 .settings-note {
   line-height: 1.5;
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.settings-check input {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  accent-color: var(--cyan);
 }
 .settings-actions {
   display: flex;
@@ -1909,4 +2112,805 @@ body {
 [data-theme="synthwave"] .ob-recheck:hover:not(:disabled) {
   background: rgba(0, 255, 255, 0.08);
   box-shadow: 0 0 12px rgba(0, 255, 255, 0.4);
+}
+
+/* ============================================================ */
+/* Odyssey map theme overrides for default dystopia branch       */
+/* ============================================================ */
+[data-theme="dystopia"] {
+  --yellow: #d7a84f;
+  --yellow-soft: rgba(169, 111, 42, 0.36);
+  --yellow-bg: rgba(255, 246, 220, 0.74);
+  --red: #b54733;
+  --cyan: #0fa7bc;
+  --cyan-bg: rgba(13, 37, 49, 0.94);
+  --cyan-edge: rgba(15, 167, 188, 0.35);
+  --green: #209b61;
+  --bg: #efe0bd;
+  --panel: rgba(255, 246, 220, 0.82);
+  --text: #182229;
+  --text-muted: rgba(24, 34, 41, 0.66);
+  --text-dim: rgba(24, 34, 41, 0.45);
+
+  --od-paper: #e9d9b8;
+  --od-paper-light: rgba(255, 246, 220, 0.86);
+  --od-navy: #0d2531;
+  --od-navy-2: #143847;
+  --od-bronze: #a96f2a;
+  --od-bronze-dark: #5d3910;
+  --od-gold: #f0cf7a;
+  --od-shadow: rgba(35, 21, 6, 0.28);
+
+  --f-display: Georgia, 'Times New Roman', 'Songti SC', serif;
+  --f-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --f-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --f-serif: Georgia, 'Times New Roman', serif;
+}
+
+[data-theme="dystopia"].panel-wrap {
+  background:
+    linear-gradient(135deg, #4b2f10, #e7c577 18%, #8b581d 34%, #f4d98e 54%, #5c3914 76%, #e5c16d);
+}
+
+[data-theme="dystopia"] .hazard-frame {
+  display: none;
+}
+
+[data-theme="dystopia"] .panel {
+  inset: 7px;
+  border-radius: 17px;
+  background:
+    linear-gradient(180deg, rgba(255, 246, 220, 0.42), rgba(255, 246, 220, 0.18)),
+    url('/backgrounds/hermes-odyssey-map-bg.png') center / cover no-repeat;
+  border: 1px solid rgba(87, 49, 14, 0.62);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 250, 225, 0.72),
+    inset 0 0 50px rgba(76, 43, 10, 0.28),
+    0 0 0 1px rgba(42, 24, 4, 0.68);
+}
+
+[data-theme="dystopia"] .panel::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border: 1px solid rgba(86, 52, 16, 0.34);
+  border-radius: 13px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+[data-theme="dystopia"] .panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(13, 37, 49, 0.06) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(13, 37, 49, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.54;
+  z-index: 1;
+}
+
+[data-theme="dystopia"] .bg-grid,
+[data-theme="dystopia"] .bg-vignette,
+[data-theme="dystopia"] .corner-mark {
+  display: none;
+}
+
+[data-theme="dystopia"] .bg-scan {
+  display: none;
+}
+
+[data-theme="dystopia"] .content {
+  padding: 10px;
+  gap: 8px;
+}
+
+[data-theme="dystopia"] .onboarding-bar {
+  flex-shrink: 0;
+}
+
+[data-theme="dystopia"] .ob-summary {
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgba(89, 54, 16, 0.44);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(233, 217, 184, 0.84), rgba(255, 246, 220, 0.72)),
+    repeating-linear-gradient(90deg, transparent 0 10px, rgba(169, 111, 42, 0.18) 10px 13px);
+  color: rgba(24, 34, 41, 0.7);
+  box-shadow: 0 3px 12px rgba(76, 43, 10, 0.12);
+}
+
+[data-theme="dystopia"] .ob-name {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+[data-theme="dystopia"] .ob-toggle {
+  color: var(--od-bronze-dark);
+}
+
+[data-theme="dystopia"] .ob-cards {
+  margin-top: 6px;
+  border: 1px solid rgba(109, 66, 18, 0.36);
+  border-radius: 16px;
+  background: rgba(255, 246, 220, 0.88);
+}
+
+[data-theme="dystopia"] .ob-card {
+  border-color: rgba(109, 66, 18, 0.3);
+  background: rgba(255, 246, 220, 0.64);
+  clip-path: none;
+  border-radius: 12px;
+}
+
+[data-theme="dystopia"] .ob-card-title,
+[data-theme="dystopia"] .ob-recheck {
+  color: var(--od-bronze-dark);
+}
+
+[data-theme="dystopia"] .ob-dot.ob-ok {
+  background: var(--cyan);
+  box-shadow: 0 0 9px rgba(15, 167, 188, 0.88);
+}
+
+[data-theme="dystopia"] .ob-dot.ob-fail {
+  background: var(--red);
+  box-shadow: 0 0 8px rgba(181, 71, 51, 0.68);
+}
+
+[data-theme="dystopia"] .ob-dot.ob-checking {
+  background: var(--od-gold);
+}
+
+[data-theme="dystopia"] .header {
+  margin: 0;
+  padding: 8px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(109, 66, 18, 0.45);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 248, 225, 0.88), rgba(232, 210, 166, 0.74)),
+    radial-gradient(circle at 100% 0%, rgba(15, 167, 188, 0.15), transparent 40%);
+  box-shadow:
+    0 10px 24px rgba(76, 43, 10, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.46);
+}
+
+[data-theme="dystopia"] .logo {
+  gap: 9px;
+}
+
+[data-theme="dystopia"] .avatar {
+  width: 44px;
+  height: 44px;
+  border: 4px solid transparent;
+  border-radius: 50%;
+  clip-path: none;
+  background:
+    linear-gradient(#fff4c7, #fff4c7) padding-box,
+    conic-gradient(from -35deg, #55340f, #f2ce73, #82511c, #fff0a8, #55340f) border-box;
+  box-shadow:
+    inset 0 0 10px rgba(45, 24, 4, 0.78),
+    0 0 0 2px rgba(255, 247, 214, 0.56);
+}
+
+[data-theme="dystopia"] .avatar::after {
+  content: none;
+}
+
+[data-theme="dystopia"] .avatar .layer.base {
+  filter: grayscale(1) contrast(1.28) sepia(0.28) brightness(0.9);
+}
+
+[data-theme="dystopia"] .avatar .layer.ghost-cyan,
+[data-theme="dystopia"] .avatar .layer.ghost-pink,
+[data-theme="dystopia"] .avatar .layer.flash {
+  display: none;
+}
+
+[data-theme="dystopia"] .avatar .layer.scanlines {
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.26) 0 1px, transparent 1px 4px);
+  opacity: 0.32;
+}
+
+[data-theme="dystopia"] .avatar.small {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+}
+
+[data-theme="dystopia"] .logo-name {
+  font-family: var(--f-display);
+  font-size: 27px;
+  line-height: 0.92;
+  letter-spacing: 0.08em;
+  color: #1a252c;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.74);
+}
+
+[data-theme="dystopia"] .logo-sub {
+  margin-top: 2px;
+  color: #895614;
+  font-family: var(--f-serif);
+  font-size: 13px;
+  font-style: italic;
+  letter-spacing: 0;
+}
+
+[data-theme="dystopia"] .logo-meta {
+  margin-top: 5px;
+  gap: 5px;
+  color: rgba(24, 34, 41, 0.66);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+
+[data-theme="dystopia"] .logo-meta .status {
+  gap: 0;
+  width: 7px;
+  overflow: hidden;
+  color: transparent;
+  font-size: 0;
+}
+
+[data-theme="dystopia"] .logo-meta .status .dot {
+  width: 7px;
+  height: 7px;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(32, 155, 97, 0.72);
+}
+
+[data-theme="dystopia"] .header-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  gap: 6px;
+  max-width: none;
+}
+
+[data-theme="dystopia"] .icon-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(89, 54, 16, 0.55);
+  border-radius: 50%;
+  clip-path: none;
+  background:
+    radial-gradient(circle at 35% 30%, #fff0b5, #b98231 58%, #5d3910);
+  color: #182229;
+  font: 700 11px/1 var(--f-mono);
+  box-shadow: 0 2px 8px rgba(76, 43, 10, 0.25);
+}
+
+[data-theme="dystopia"] .icon-btn:hover {
+  background:
+    radial-gradient(circle at 35% 30%, #fff6c9, #d09b43 58%, #6b4317);
+}
+
+[data-theme="dystopia"] .icon-btn.active {
+  background:
+    radial-gradient(circle at 35% 30%, #dffaff, #36aec0 58%, #0d4c5d);
+  color: #071c24;
+}
+
+[data-theme="dystopia"] .system-bar {
+  display: flex;
+  margin: 0;
+  padding: 6px 10px;
+  gap: 8px;
+  border: 1px solid rgba(109, 66, 18, 0.36);
+  border-radius: 14px;
+  background: rgba(255, 246, 220, 0.78);
+  color: rgba(24, 34, 41, 0.76);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+[data-theme="dystopia"] .system-bar .hazard-mini {
+  width: 30px;
+  height: 1px;
+  background: rgba(169, 111, 42, 0.62);
+}
+
+[data-theme="dystopia"] .tab-meta {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(233, 217, 184, 0.5);
+  border-radius: 16px;
+  clip-path: none;
+  background:
+    linear-gradient(135deg, rgba(13, 37, 49, 0.96), rgba(20, 56, 71, 0.88)),
+    radial-gradient(circle at 100% 0%, rgba(15, 167, 188, 0.2), transparent 42%);
+  color: var(--ivory, #fff6dc);
+  box-shadow: 0 10px 24px rgba(12, 34, 43, 0.22);
+}
+
+[data-theme="dystopia"] .tab-meta::before {
+  content: 'ACTIVE WAYPOINT';
+  position: absolute;
+  top: 7px;
+  left: 44px;
+  color: var(--od-gold);
+  font: 700 9px/1 var(--f-mono);
+  letter-spacing: 0.14em;
+}
+
+[data-theme="dystopia"] .tab-meta .tab-fav {
+  width: 14px;
+  height: 14px;
+  margin-top: 15px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 14px rgba(15, 167, 188, 0.9);
+}
+
+[data-theme="dystopia"] .tab-meta .tab-url {
+  margin-top: 15px;
+  color: #7cf0ff;
+  font-family: var(--f-body);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+[data-theme="dystopia"] .tab-meta .tab-id {
+  margin-top: 15px;
+  color: rgba(255, 246, 220, 0.6);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+[data-theme="dystopia"] .feed {
+  margin: 0;
+  padding: 12px;
+  gap: 10px;
+  border: 1px solid rgba(109, 66, 18, 0.42);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 246, 220, 0.86), rgba(229, 208, 165, 0.7));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+}
+
+[data-theme="dystopia"] .feed::before,
+[data-theme="dystopia"] .feed::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+[data-theme="dystopia"] .feed::before {
+  width: 190px;
+  height: 190px;
+  border: 1px solid rgba(169, 111, 42, 0.34);
+  transform: translate(-50%, -50%);
+}
+
+[data-theme="dystopia"] .feed::after {
+  width: 112px;
+  height: 112px;
+  border: 1px solid rgba(15, 167, 188, 0.32);
+  transform: translate(-50%, -50%) rotate(28deg);
+}
+
+[data-theme="dystopia"] .feed-empty {
+  position: relative;
+  z-index: 1;
+  margin: auto;
+  width: min(286px, 100%);
+  padding: 15px 16px;
+  border: 1px solid rgba(240, 207, 122, 0.46);
+  border-radius: 18px;
+  background: rgba(13, 37, 49, 0.88);
+  color: rgba(255, 246, 220, 0.86);
+  font-family: var(--f-body);
+  font-size: 14px;
+  line-height: 1.65;
+  letter-spacing: 0.03em;
+  box-shadow: 0 12px 24px rgba(13, 37, 49, 0.24);
+}
+
+[data-theme="dystopia"] .feed-empty::before {
+  content: 'ORACLE ROUTE';
+  display: block;
+  margin-bottom: 9px;
+  color: var(--od-gold);
+  font: 700 10px/1 var(--f-mono);
+  letter-spacing: 0.18em;
+}
+
+[data-theme="dystopia"] .msg.user {
+  max-width: 84%;
+  border: 1px solid rgba(15, 167, 188, 0.42);
+  border-radius: 18px 18px 6px 18px;
+  clip-path: none;
+  background: rgba(13, 37, 49, 0.9);
+  color: #7cf0ff;
+  box-shadow: 0 8px 18px rgba(13, 37, 49, 0.16);
+}
+
+[data-theme="dystopia"] .ai-body {
+  color: var(--text);
+}
+
+[data-theme="dystopia"] .ai-body.md {
+  padding: 12px 14px;
+  border: 1px solid rgba(109, 66, 18, 0.32);
+  border-radius: 16px;
+  background: rgba(255, 246, 220, 0.86);
+  box-shadow: 0 8px 18px rgba(76, 43, 10, 0.12);
+}
+
+[data-theme="dystopia"] .ai-body p,
+[data-theme="dystopia"] .ai-body li {
+  color: rgba(24, 34, 41, 0.82);
+}
+
+[data-theme="dystopia"] .msg.thinking {
+  border: 1px solid rgba(169, 111, 42, 0.32);
+  border-radius: 14px;
+  background: rgba(255, 246, 220, 0.76);
+  color: var(--text-muted);
+}
+
+[data-theme="dystopia"] .msg.thinking::before {
+  content: 'ORACLE THINKING';
+  color: var(--od-bronze-dark);
+}
+
+[data-theme="dystopia"] .tool-chip {
+  border: 1px solid rgba(240, 207, 122, 0.48);
+  border-radius: 999px;
+  background: rgba(13, 37, 49, 0.9);
+  color: var(--od-gold);
+}
+
+[data-theme="dystopia"] .tool-row {
+  border: 1px solid rgba(109, 66, 18, 0.32);
+  border-radius: 14px;
+  clip-path: none;
+  background: rgba(255, 246, 220, 0.86);
+}
+
+[data-theme="dystopia"] .tool-row .tool-name {
+  color: var(--text);
+}
+
+[data-theme="dystopia"] .tool-row .tool-num,
+[data-theme="dystopia"] .tool-row .tool-toggle {
+  color: var(--cyan);
+}
+
+[data-theme="dystopia"] .tool-row .tool-badge.pending,
+[data-theme="dystopia"] .tool-row .tool-badge.ok {
+  background: var(--od-gold);
+  color: var(--od-navy);
+}
+
+[data-theme="dystopia"] .tool-result {
+  border: 1px solid rgba(109, 66, 18, 0.28);
+  border-radius: 12px;
+  background: rgba(255, 246, 220, 0.86);
+  color: var(--text-muted);
+}
+
+[data-theme="dystopia"] .composer {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid rgba(240, 207, 122, 0.5);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(13, 37, 49, 0.96), rgba(17, 49, 62, 0.92));
+  box-shadow: 0 -8px 24px rgba(76, 43, 10, 0.12);
+}
+
+[data-theme="dystopia"] .composer-modebar {
+  margin-bottom: 6px;
+}
+
+[data-theme="dystopia"] .input-wrap {
+  padding: 0;
+  border: none;
+  clip-path: none;
+  background: transparent;
+}
+
+[data-theme="dystopia"] .composer textarea {
+  min-height: 34px;
+  max-height: 92px;
+  color: var(--ivory, #fff6dc);
+  caret-color: var(--od-gold);
+  font-size: 14px;
+}
+
+[data-theme="dystopia"] .composer textarea::placeholder {
+  color: rgba(255, 246, 220, 0.58);
+  font-family: var(--f-body);
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+[data-theme="dystopia"] .chip,
+[data-theme="dystopia"] .vision-pill {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(240, 207, 122, 0.5);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--od-gold);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+}
+
+[data-theme="dystopia"] .chip.mode {
+  background: transparent;
+}
+
+[data-theme="dystopia"] .composer-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 46px;
+  align-items: end;
+  gap: 7px;
+  margin-top: 6px;
+}
+
+[data-theme="dystopia"] .toolbar-spacer,
+[data-theme="dystopia"] .vision-pill {
+  display: none;
+}
+
+[data-theme="dystopia"] .chip.provider-chip,
+[data-theme="dystopia"] .chip.model-chip {
+  flex: none;
+  width: 100%;
+}
+
+[data-theme="dystopia"] .send-fab,
+[data-theme="dystopia"] .stop-fab {
+  grid-column: 3;
+  grid-row: 1;
+  margin-left: 0;
+}
+
+[data-theme="dystopia"] .chip:hover {
+  background: rgba(240, 207, 122, 0.08);
+}
+
+[data-theme="dystopia"] .chip select option {
+  background: var(--od-navy);
+  color: var(--ivory, #fff6dc);
+}
+
+[data-theme="dystopia"] .vision-pill.vision-on,
+[data-theme="dystopia"] .vision-pill.vision-unknown {
+  color: var(--od-gold);
+  border-color: rgba(240, 207, 122, 0.5);
+}
+
+[data-theme="dystopia"] .vision-pill.vision-off {
+  color: rgba(255, 246, 220, 0.42);
+}
+
+[data-theme="dystopia"] .send-fab,
+[data-theme="dystopia"] .stop-fab {
+  width: 46px;
+  height: 46px;
+  min-width: 46px;
+  padding: 0;
+  border: 1px solid rgba(240, 207, 122, 0.76);
+  border-radius: 50%;
+  clip-path: none;
+  background:
+    radial-gradient(circle at 35% 30%, #fff3ba, #c49136 58%, #6a4216);
+  color: #112833;
+  font-family: var(--f-display);
+  font-size: 26px;
+  letter-spacing: 0;
+  box-shadow: 0 0 18px rgba(240, 207, 122, 0.34);
+}
+
+[data-theme="dystopia"] .send-fab:hover:not(:disabled) {
+  background:
+    radial-gradient(circle at 35% 30%, #fff8cd, #d7a84f 58%, #7d511c);
+}
+
+[data-theme="dystopia"] .send-fab:disabled {
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 243, 186, 0.5), rgba(196, 145, 54, 0.34) 58%, rgba(106, 66, 22, 0.45));
+  color: rgba(17, 40, 51, 0.45);
+}
+
+[data-theme="dystopia"] .history-panel,
+[data-theme="dystopia"] .settings-panel {
+  margin: 0;
+  border: 1px solid rgba(109, 66, 18, 0.42);
+  border-radius: 18px;
+  clip-path: none;
+  background: rgba(255, 246, 220, 0.92);
+}
+
+[data-theme="dystopia"] .history-head,
+[data-theme="dystopia"] .settings-head {
+  color: var(--od-bronze-dark);
+  border-bottom: 1px solid rgba(109, 66, 18, 0.32);
+}
+
+[data-theme="dystopia"] .history-item.current {
+  background: rgba(169, 111, 42, 0.12);
+}
+
+[data-theme="dystopia"] .settings-field input,
+[data-theme="dystopia"] .settings-actions button {
+  border-color: rgba(109, 66, 18, 0.32);
+  background: rgba(255, 246, 220, 0.68);
+  color: var(--text);
+}
+
+[data-theme="dystopia"] .approval-card {
+  border: 1px solid rgba(181, 71, 51, 0.5);
+  border-left: 4px solid var(--red);
+  border-radius: 16px;
+  background: rgba(255, 246, 220, 0.86);
+}
+
+[data-theme="dystopia"] .approval-title {
+  color: var(--red);
+}
+
+@media (max-width: 430px) {
+  [data-theme="dystopia"] .panel {
+    inset: 6px;
+  }
+
+  [data-theme="dystopia"] .content {
+    padding: 9px;
+    gap: 7px;
+  }
+
+  [data-theme="dystopia"] .header {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  [data-theme="dystopia"] .avatar {
+    width: 42px;
+    height: 42px;
+    border-width: 4px;
+  }
+
+  [data-theme="dystopia"] .logo-name {
+    font-size: 26px;
+    letter-spacing: 0.07em;
+  }
+
+  [data-theme="dystopia"] .logo-sub {
+    font-size: 13px;
+  }
+
+  [data-theme="dystopia"] .logo-meta {
+    font-size: 9px;
+    gap: 4px;
+  }
+
+  [data-theme="dystopia"] .logo-meta .model:nth-of-type(2),
+  [data-theme="dystopia"] .logo-meta .sep:nth-of-type(3) {
+    display: none;
+  }
+
+  [data-theme="dystopia"] .header-actions {
+    grid-template-columns: repeat(3, 27px);
+    gap: 5px;
+    max-width: none;
+  }
+
+  [data-theme="dystopia"] .icon-btn {
+    width: 27px;
+    height: 27px;
+    font-size: 10px;
+  }
+
+  [data-theme="dystopia"] .ob-name {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+  }
+
+  [data-theme="dystopia"] .system-bar {
+    padding: 6px 9px;
+    font-size: 10px;
+  }
+
+  [data-theme="dystopia"] .tab-meta {
+    padding: 9px 11px;
+  }
+
+  [data-theme="dystopia"] .tab-meta .tab-url {
+    font-size: 15px;
+  }
+
+  [data-theme="dystopia"] .tab-meta .tab-id {
+    font-size: 9px;
+  }
+
+  [data-theme="dystopia"] .feed {
+    padding: 11px;
+  }
+
+  [data-theme="dystopia"] .feed-empty {
+    padding: 14px 12px;
+    font-size: 13px;
+  }
+
+  [data-theme="dystopia"] .composer {
+    padding: 9px;
+  }
+
+  [data-theme="dystopia"] .chip,
+  [data-theme="dystopia"] .vision-pill {
+    height: 27px;
+    padding: 0 8px;
+    font-size: 10px;
+  }
+
+  [data-theme="dystopia"] .send-fab,
+  [data-theme="dystopia"] .stop-fab {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+  }
+
+  [data-theme="dystopia"] .composer-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 360px) {
+  [data-theme="dystopia"] .header {
+    flex-wrap: nowrap;
+  }
+
+  [data-theme="dystopia"] .logo {
+    flex-basis: auto;
+  }
+
+  [data-theme="dystopia"] .header-actions {
+    margin-left: auto;
+  }
+
+  [data-theme="dystopia"] .logo-name {
+    font-size: 25px;
+  }
+
+  [data-theme="dystopia"] .logo-sub {
+    font-size: 12px;
+  }
+
+  [data-theme="dystopia"] .logo-meta .status {
+    width: 7px;
+    overflow: hidden;
+    color: transparent;
+    font-size: 0;
+    gap: 0;
+  }
+
+  [data-theme="dystopia"] .system-bar span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-theme="dystopia"] .chip.provider-chip,
+  [data-theme="dystopia"] .chip.model-chip {
+    flex-basis: calc(50% - 3px);
+  }
+
+  [data-theme="dystopia"] .send-fab {
+    width: 52px;
+    margin-left: auto;
+  }
 }

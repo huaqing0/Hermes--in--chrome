@@ -1,10 +1,10 @@
 # docs/
 
-This directory holds screenshots, GIFs, and other visual assets referenced from the top-level `README.md`.
+This directory holds screenshots, GIFs, and other visual assets for the top-level `README.md`.
 
 ## Pending assets
 
-The main README links to `./docs/screenshot-placeholder.png`. To replace it with real captures:
+Before publishing a screenshot-heavy README, capture:
 
 1. **Hero screenshot (PNG)** — sidepanel in CP2077 theme, fresh install state showing the onboarding status bar. Suggested size: 1280×800 or close to actual sidepanel proportions.
 2. **Theme comparison (PNG, optional)** — CP2077 vs Synthwave side by side.

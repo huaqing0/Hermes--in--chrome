@@ -1,6 +1,6 @@
 import type { ClientMessage, ServerMessage } from '../types/messages';
+import { GATEWAY_WS_URL } from './gateway';
 
-const WS_URL = 'ws://127.0.0.1:8642/api/ws/extension';
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 type Listener = (msg: ServerMessage) => void;
@@ -11,6 +11,7 @@ export class HermesWS {
   private listeners = new Set<Listener>();
   private connected = false;
   private closing = false;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   start() {
     this.closing = false;
@@ -19,6 +20,7 @@ export class HermesWS {
 
   stop() {
     this.closing = true;
+    this.stopPing();
     this.ws?.close();
     this.ws = null;
   }
@@ -43,7 +45,7 @@ export class HermesWS {
 
   private connect() {
     try {
-      this.ws = new WebSocket(WS_URL);
+      this.ws = new WebSocket(GATEWAY_WS_URL);
     } catch (e) {
       console.error('[Hermes WS] 创建连接失败', e);
       this.scheduleReconnect();
@@ -55,6 +57,7 @@ export class HermesWS {
       this.connected = true;
       this.retry = 0;
       this.send({ type: 'hello', client: 'chrome-extension', version: '0.1.0' });
+      this.startPing();
     };
 
     this.ws.onmessage = (ev) => {
@@ -69,6 +72,7 @@ export class HermesWS {
     this.ws.onclose = () => {
       this.connected = false;
       this.ws = null;
+      this.stopPing();
       if (!this.closing) {
         console.log('[Hermes WS] 断连，准备重试');
         this.scheduleReconnect();
@@ -78,6 +82,20 @@ export class HermesWS {
     this.ws.onerror = (e) => {
       console.error('[Hermes WS] 错误', e);
     };
+  }
+
+  private startPing() {
+    this.stopPing();
+    this.pingTimer = setInterval(() => {
+      this.send({ type: 'ping' });
+    }, 30_000);
+  }
+
+  private stopPing() {
+    if (this.pingTimer != null) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
   }
 
   private scheduleReconnect() {
