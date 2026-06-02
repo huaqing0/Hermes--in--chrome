@@ -2351,11 +2351,12 @@ body {
 }
 
 [data-theme="dystopia"] .logo-meta .status {
-  gap: 0;
-  width: 7px;
-  overflow: hidden;
-  color: transparent;
-  font-size: 0;
+  gap: 4px;
+  width: auto;
+  min-width: max-content;
+  overflow: visible;
+  color: rgba(24, 34, 41, 0.66);
+  font-size: inherit;
 }
 
 [data-theme="dystopia"] .logo-meta .status .dot {
@@ -2891,11 +2892,12 @@ body {
   }
 
   [data-theme="dystopia"] .logo-meta .status {
-    width: 7px;
-    overflow: hidden;
-    color: transparent;
-    font-size: 0;
-    gap: 0;
+    width: auto;
+    min-width: max-content;
+    overflow: visible;
+    color: rgba(24, 34, 41, 0.66);
+    font-size: inherit;
+    gap: 4px;
   }
 
   [data-theme="dystopia"] .system-bar span {
