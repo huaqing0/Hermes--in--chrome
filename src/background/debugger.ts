@@ -147,10 +147,6 @@ function normalizeCDPConsoleLog(item: ConsoleLogRecord): ConsoleLogRecord {
   };
 }
 
-function normalizeNetworkLogItem(item: NetworkLogRecord): NetworkLogRecord {
-  return { ...item };
-}
-
 async function ensureAttached(tabId: number): Promise<void> {
   if (ATTACHED.has(tabId)) return;
   return new Promise((resolve, reject) => {
@@ -444,7 +440,7 @@ export async function mouseDown(tabId: number, x: number, y: number, button: 'le
 }
 
 export async function mouseUp(tabId: number, x: number, y: number, button: 'left' | 'middle' | 'right' = 'left') {
-  const buttons = button === 'left' ? 0 : button === 'right' ? 0 : 0;
+  const buttons = 0; // mouseReleased: no buttons remain pressed after release
   await send(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount: 1, buttons });
 }
 
@@ -597,7 +593,7 @@ export async function readNetworkRequests(
     if (includeFailed) return true;
     return !isFailedNetworkRequest(entry);
   });
-  const selected = filtered.slice(-lim).map(normalizeNetworkLogItem);
+  const selected = filtered.slice(-lim).map((e) => ({ ...e }));
 
   if (!includeBody) {
     return selected.map((entry) => {

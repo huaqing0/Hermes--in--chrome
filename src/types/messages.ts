@@ -117,6 +117,12 @@ export type SidepanelMessage =
   | { type: 'SP_ONBOARDING_CHECK_NATIVE_HOST' }
   | { type: 'SP_ONBOARDING_GET_EXTENSION_ID' };
 
+export type ClipboardSnapshot =
+  | { mode: 'full'; items: Array<{ types: Array<{ type: string; dataUrl: string }> }> }
+  | { mode: 'text'; text: string };
+
+export type ClipboardRestoreResult = { mode: 'full' | 'text' | 'failed'; error?: string };
+
 export type SwToSidepanelMessage =
   | { type: 'SW_DELTA'; channel: 'thinking' | 'text'; text: string; session_id?: string }
   | { type: 'SW_TOOL_CALL'; id: string; tool: ToolName; args: Record<string, unknown>; session_id?: string }

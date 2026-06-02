@@ -1,5 +1,6 @@
 // Offscreen Document：每 20s 给 Service Worker 发心跳，防止 SW 30s idle 被杀
-// 学自 Claude in Chrome 的做法
+
+import type { ClipboardSnapshot } from '../types/messages';
 
 setInterval(() => {
   chrome.runtime.sendMessage({ type: 'SW_KEEPALIVE' }).catch(() => {});
@@ -37,10 +38,6 @@ function writeClipboardViaTextarea(text: string): void {
     ta.remove();
   }
 }
-
-type ClipboardSnapshot =
-  | { mode: 'full'; items: Array<{ types: Array<{ type: string; dataUrl: string }> }> }
-  | { mode: 'text'; text: string };
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

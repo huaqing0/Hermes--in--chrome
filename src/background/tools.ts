@@ -2,7 +2,7 @@
 
 import * as cdp from './debugger';
 import * as tg from './tabGroup';
-import type { ToolName } from '../types/messages';
+import type { ToolName, ClipboardSnapshot, ClipboardRestoreResult } from '../types/messages';
 
 interface SessionToolState {
   currentTabId: number; // agent 当前操作的 tab（navigate/open_tab 会变）
@@ -243,12 +243,6 @@ async function ensureClipboardOffscreen(): Promise<void> {
     throw e;
   }
 }
-
-type ClipboardSnapshot =
-  | { mode: 'full'; items: Array<{ types: Array<{ type: string; dataUrl: string }> }> }
-  | { mode: 'text'; text: string };
-
-type ClipboardRestoreResult = { mode: 'full' | 'text' | 'failed'; error?: string };
 
 async function clipboardReadSnapshot(): Promise<ClipboardSnapshot> {
   await ensureClipboardOffscreen();
