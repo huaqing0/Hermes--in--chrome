@@ -41,6 +41,14 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 >
 > **Platform**: currently only macOS is fully supported. Windows / Linux native-host install is on the roadmap.
 
+### Quick start (no dev tools needed)
+
+1. Go to [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) → download the latest `hermes-in-chrome.zip`
+2. Unzip → open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick the unzipped folder
+3. Press `Cmd+H` (Mac) to open the sidepanel → follow the status bar prompts
+
+### Dev install (for contributors)
+
 Three steps:
 
 1. **Clone + build**:

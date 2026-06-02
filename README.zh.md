@@ -41,6 +41,14 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 > hermes gateway run
 > ```
 
+### 快速安装（无需开发工具）
+
+1. 到 [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) 页面下载最新的 `hermes-in-chrome.zip`
+2. 解压 → 打开 `chrome://extensions` → 启用**开发者模式** → **加载已解压的扩展程序** → 选解压出来的文件夹
+3. `Cmd+H` 打开侧边栏 → 按状态条引导操作
+
+### 开发者安装（如需改代码）
+
 三步走：
 
 1. **克隆 + 构建**：
