@@ -650,6 +650,126 @@ TOOLS: list[tuple[str, str, dict]] = [
             },
         },
     ),
+    # ── 新增工具 (v0.2) ─────────────────────────────────
+    (
+        "ext_javascript_tool",
+        "javascript_tool",
+        {
+            "name": "ext_javascript_tool",
+            "description": (
+                "在当前页面执行一段安全的 JavaScript。Auto 模式下无感执行（不弹审批），"
+                "但受到严格安全限制：禁止读取 cookies/localStorage/sessionStorage/indexedDB/剪贴板，"
+                "禁止发网络请求，禁止 window.open，禁止 eval/Function/import。"
+                "适合读取 DOM 状态、表单结构、按钮文本、页面变量的非敏感摘要。"
+                "优先用普通浏览器工具，只有普通工具无法表达时才用 JS。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "要执行的 JS 代码。超时默认 1000ms，最大 3000ms。"},
+                    "tabId": {"type": "number"},
+                    "timeoutMs": {"type": "number"},
+                },
+                "required": ["code"],
+            },
+        },
+    ),
+    (
+        "ext_file_upload",
+        "file_upload",
+        {
+            "name": "ext_file_upload",
+            "description": (
+                "把本地文件设置到网页 <input type=file> 上。"
+                "路径必须是绝对路径或以 ~ 开头的路径。"
+                "拒绝 .ssh/.aws/.gnupg 等敏感目录。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref_id": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "tabId": {"type": "number"},
+                    "paths": {"type": "array", "items": {"type": "string"}},
+                    "submit": {"type": "boolean", "description": "设置文件后自动提交表单"},
+                },
+                "required": ["paths"],
+            },
+        },
+    ),
+    (
+        "ext_upload_image",
+        "upload_image",
+        {
+            "name": "ext_upload_image",
+            "description": (
+                "upload_image 是 file_upload 的图片专用版本，只允许 .png/.jpg/.jpeg/.webp/.gif。"
+                "其它行为与 file_upload 一致。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref_id": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "tabId": {"type": "number"},
+                    "paths": {"type": "array", "items": {"type": "string"}},
+                    "submit": {"type": "boolean"},
+                },
+                "required": ["paths"],
+            },
+        },
+    ),
+    (
+        "ext_shortcuts_list",
+        "shortcuts_list",
+        {
+            "name": "ext_shortcuts_list",
+            "description": "列出浏览器和编辑器的常用快捷键映射。可选 scope 参数过滤。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "enum": ["browser", "page", "media", "editing"]},
+                },
+            },
+        },
+    ),
+    (
+        "ext_shortcuts_execute",
+        "shortcuts_execute",
+        {
+            "name": "ext_shortcuts_execute",
+            "description": "用快捷键 ID 触发对应按键组合。等价于 ext_key，但用语义化名称。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                },
+                "required": ["id"],
+            },
+        },
+    ),
+    (
+        "ext_resize_window",
+        "resize_window",
+        {
+            "name": "ext_resize_window",
+            "description": (
+                "调整浏览器窗口尺寸。width: 320-2560, height: 480-1600。"
+                "用于响应式测试或截图前调整视口。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "width": {"type": "number", "minimum": 320, "maximum": 2560},
+                    "height": {"type": "number", "minimum": 480, "maximum": 1600},
+                    "tabId": {"type": "number"},
+                },
+                "required": ["width", "height"],
+            },
+        },
+    ),
 ]
 
 

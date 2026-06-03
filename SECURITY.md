@@ -12,6 +12,8 @@ Hermes in Chrome can read page content and send user prompts plus selected page 
 
 If you configure an external model provider, the backend may send relevant prompt/page context to that provider. Review your provider's data policy before use.
 
+For the concrete trust boundaries, risky permissions, and mitigations, see [docs/threat-model.md](./docs/threat-model.md).
+
 ## Reporting Issues
 
 Please report security issues privately before opening a public GitHub issue.

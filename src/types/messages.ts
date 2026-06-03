@@ -25,9 +25,18 @@ export type ToolName =
   | 'get_console_logs'
   | 'read_network_requests'
   | 'save_to_local'
-  | 'extract_markdown';
+  | 'extract_markdown'
+  | 'javascript_tool'
+  | 'file_upload'
+  | 'upload_image'
+  | 'shortcuts_list'
+  | 'shortcuts_execute'
+  | 'resize_window';
 
 export type ExecMode = 'auto' | 'approval' | 'plan';
+
+export type ToolPermission = 'read' | 'action' | 'navigate' | 'upload'
+  | 'download' | 'file_write' | 'clipboard' | 'javascript' | 'window' | 'debug';
 
 export interface CredentialOverride {
   apiKey?: string;

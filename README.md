@@ -55,16 +55,16 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 
 ## Install
 
-> **Before you start**: Make sure you have [Hermes Agent](https://github.com/huaqing0/hermes-agent) v0.2.0+ running on `127.0.0.1:8642`, and set `HERMES_IN_CHROME_BACKEND_PATH`:
+> **Before you start**: Install [Hermes Agent](https://github.com/huaqing0/hermes-agent) v0.2.0+. From the unzipped `hermes-in-chrome` folder, run the launcher when the sidepanel asks for the backend:
 > ```bash
-> export HERMES_IN_CHROME_BACKEND_PATH=/path/to/hermes-in-chrome/backend
-> hermes gateway run
+> npm run backend:ensure
 > ```
+> The launcher starts Hermes Agent with `HERMES_IN_CHROME_BACKEND_PATH` pointing at this package's `backend/` bridge. If you run `hermes gateway run` manually, set that environment variable yourself.
 
 ### Quick start (no dev tools needed)
 
 1. Go to [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) → download `hermes-in-chrome.zip`
-2. Unzip → open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick the unzipped folder
+2. Unzip → open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick the unzipped `hermes-in-chrome/` folder
 3. Press `Cmd+H` to open the sidepanel → follow the status bar prompts
 
 ### Dev install (for contributors)
@@ -215,6 +215,8 @@ The MV3 manifest requests these permissions, each for a specific reason:
 | `clipboardRead`, `clipboardWrite` | Snapshot your clipboard before pasting rich text into X / YouTube etc., then restore it. **Clipboard contents are never sent off-device.** When full snapshot/restore isn't supported the result is marked `clipboard_restore_mode: 'text'`; if restore fails it is marked `clipboard_restore_mode: 'failed'` |
 | `nativeMessaging` | Talk to `hermes-filewriter` (a separate Python process) to persist files locally. Without this `save_to_local` is unavailable |
 | `host_permissions: <all_urls>` | The agent needs to operate on any URL you point it at; we can't predict in advance which sites you'll use |
+
+For a fuller security review, see [Threat model](./docs/threat-model.md).
 
 What we do **not** do:
 

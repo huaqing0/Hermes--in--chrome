@@ -19,7 +19,18 @@ jobs:
       - run: npm run build
 
       - name: Package
-        run: zip -r hermes-in-chrome.zip dist/
+        run: |
+          rm -rf release hermes-in-chrome.zip
+          mkdir -p release/hermes-in-chrome
+          cp -R dist/. release/hermes-in-chrome/
+          mkdir -p release/hermes-in-chrome/backend release/hermes-in-chrome/scripts
+          cp backend/browser_extension_tools.py release/hermes-in-chrome/backend/
+          cp scripts/check-bridge.mjs scripts/hermes-backend.mjs scripts/hermes-filewriter.py scripts/install-native-host.mjs release/hermes-in-chrome/scripts/
+          cp package.json README.md README.zh.md LICENSE SECURITY.md CONTRIBUTING.md .env.example release/hermes-in-chrome/
+          mkdir -p release/hermes-in-chrome/docs
+          cp docs/README.md docs/sidepanel.png docs/threat-model.md release/hermes-in-chrome/docs/
+          cd release
+          zip -r ../hermes-in-chrome.zip hermes-in-chrome
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

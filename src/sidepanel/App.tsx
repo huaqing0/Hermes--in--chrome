@@ -137,6 +137,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     setupHint: 'Paste an Anthropic API Key. If you do not have one, use OpenAI Codex OAuth or Custom (e.g. OpenRouter Base URL).',
     vision: true,
     models: [
+      { value: 'claude-opus-4-8', label: 'Claude Opus 4.8', short: 'Opus 4.8' },
       { value: 'claude-opus-4-7', label: 'Claude Opus 4.7', short: 'Opus 4.7' },
       { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', short: 'Sonnet 4.6' },
       { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', short: 'Opus 4.6' },

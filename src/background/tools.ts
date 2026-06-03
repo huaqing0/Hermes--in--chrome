@@ -2633,6 +2633,74 @@ async function extractMarkdown(
   }
 }
 
+// ── javascript_tool ───────────────────────────────────────
+
+const JS_DENYLIST = [
+  'document.cookie', 'localStorage', 'sessionStorage', 'indexedDB',
+  'chrome.', 'fetch(', 'XMLHttpRequest', 'navigator.sendBeacon',
+  'navigator.clipboard', 'eval(', 'Function(', 'import(',
+  'WebSocket', 'EventSource', 'postMessage(', 'window.open(',
+];
+
+function validateSafeJavascript(code: string): void {
+  if (code.length > 8000) throw new Error('Code exceeds 8000 characters');
+  // Block obviously obfuscated code: >500 chars without space or newline
+  if (code.length > 500 && !/[ \n]/.test(code.slice(0, 500)) && !/[ \n]/.test(code.slice(500))) {
+    throw new Error('Code appears obfuscated');
+  }
+  if (/\bwhile\s*\(\s*true\s*\)/.test(code)) throw new Error('while(true) is forbidden');
+  if (/<script[\s>]/i.test(code)) throw new Error('Creating <script> tags is forbidden');
+  if (/<iframe[\s>]/i.test(code)) throw new Error('Creating <iframe> elements is forbidden');
+  const lower = code.toLowerCase();
+  for (const kw of JS_DENYLIST) {
+    if (lower.includes(kw.toLowerCase())) throw new Error(`Forbidden: ${kw}`);
+  }
+}
+
+function truncateValue(v: unknown, maxChars: number): unknown {
+  if (typeof v === 'string' && v.length > maxChars) return v.slice(0, maxChars) + '…(truncated)';
+  if (Array.isArray(v)) return v.slice(0, 100).map((x) => truncateValue(x, maxChars));
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v).slice(0, 200)) {
+      out[k] = truncateValue((v as Record<string, unknown>)[k], maxChars);
+    }
+    return out;
+  }
+  return v;
+}
+
+async function javascriptTool(_sessionId: string, args: {
+  code?: string; tabId?: number; timeoutMs?: number; returnByValue?: boolean;
+}) {
+  const code = String(args.code || '');
+  if (!code.trim()) return { error: 'code is required' };
+  if (code.length > 8000) return { error: `Code exceeds 8000 characters (got ${code.length})` };
+
+  try {
+    validateSafeJavascript(code);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e), blocked: true };
+  }
+
+  const tabId = args.tabId ?? (await getCurrentTab(_sessionId).catch(() => undefined));
+  if (tabId == null) return { error: 'No active tab for javascript_tool' };
+
+  const timeoutMs = Math.min(args.timeoutMs ?? 1000, 3000);
+
+  try {
+    const result = await Promise.race([
+      cdp.evaluate(tabId, code),
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error(`javascript_tool timed out after ${timeoutMs}ms`)), timeoutMs),
+      ),
+    ]);
+    return { result: truncateValue(result, 4000), truncated: typeof result === 'string' && result.length > 4000 };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 async function browserBatch(sessionId: string, args: { actions?: BatchAction[] }) {
   const actions = args.actions || [];
   if (!Array.isArray(actions) || actions.length === 0) return { error: 'actions argument is required' };
@@ -2666,6 +2734,156 @@ async function browserBatch(sessionId: string, args: { actions?: BatchAction[] }
   return { results, completed: results.filter((r) => r.ok).length, total: actions.length };
 }
 
+// ── shortcuts ────────────────────────────────────────────
+
+const SHORTCUTS: Record<string, string> = {
+  'browser.reload': 'Meta+R',
+  'browser.find': 'Meta+F',
+  'browser.address_bar': 'Meta+L',
+  'editing.submit': 'Meta+Enter',
+  'editing.select_all': 'Meta+A',
+  'editing.copy': 'Meta+C',
+  'editing.paste': 'Meta+V',
+  'media.play_pause': 'Space',
+  'media.fullscreen': 'F',
+  'media.mute': 'M',
+};
+
+async function shortcutsList(_sessionId: string, args: { scope?: string }) {
+  const scope = args.scope;
+  if (scope) {
+    const prefix = scope + '.';
+    const filtered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(SHORTCUTS)) {
+      if (k.startsWith(prefix)) filtered[k] = v;
+    }
+    return { shortcuts: filtered };
+  }
+  return { shortcuts: SHORTCUTS };
+}
+
+async function shortcutsExecute(_sessionId: string, args: { id?: string }) {
+  if (!args.id) return { error: 'id is required' };
+  const chord = SHORTCUTS[args.id];
+  if (!chord) return { error: `Unknown shortcut: ${args.id}`, available: Object.keys(SHORTCUTS) };
+  return pressKey(_sessionId, { key: chord });
+}
+
+// ── resize_window ─────────────────────────────────────────
+
+async function resizeWindow(_sessionId: string, args: { width?: number; height?: number }) {
+  const w = args.width, h = args.height;
+  if (typeof w !== 'number' || typeof h !== 'number') return { error: 'width and height are required' };
+  if (w < 320 || w > 2560 || h < 480 || h > 1600) {
+    return { error: `Dimensions out of range. width: 320-2560, height: 480-1600` };
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.windowId) return { error: 'Could not find window' };
+  await chrome.windows.update(tab.windowId, { width: w, height: h });
+  return { width: w, height: h };
+}
+
+// ── file_upload / upload_image ────────────────────────────
+
+const SENSITIVE_DIRS = ['.ssh', '.aws', '.gnupg', '.zshrc', '.bashrc', '.bash_profile', '.profile'];
+
+function validateUploadPath(p: string): void {
+  // Accept only absolute or ~ paths
+  if (!p.startsWith('/') && !p.startsWith('~')) throw new Error(`Path must be absolute: ${p}`);
+  const normalized = p.startsWith('~') ? '/Users/__home_placeholder' + p.slice(1) : p;
+  for (const dir of SENSITIVE_DIRS) {
+    if (normalized.includes(`/${dir}`) || normalized.endsWith(`/${dir}`)) {
+      throw new Error(`Path in sensitive directory: ${dir}`);
+    }
+  }
+}
+
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+
+async function fileUpload(_sessionId: string, args: {
+  ref_id?: string; selector?: string; tabId?: number; paths?: string[]; submit?: boolean;
+}) {
+  const paths = args.paths || [];
+  if (!paths.length) return { error: 'paths is required' };
+  for (const p of paths) {
+    try { validateUploadPath(p); }
+    catch (e) { return { error: (e as Error).message }; }
+  }
+
+  const tabId = args.tabId ?? (await getCurrentTab(_sessionId).catch(() => undefined));
+  if (tabId == null) return { error: 'No active tab' };
+
+  try {
+    // Use CDP to find file input and set files
+    const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: -1 }) as { root: { nodeId: number } };
+    let nodeId: number | undefined;
+
+    if (args.ref_id) {
+      const el = await chrome.debugger.sendCommand({ tabId }, 'DOM.resolveNode', {
+        backendNodeId: parseInt(args.ref_id) || undefined,
+      }).catch(() => null) as { object?: { objectId?: string } } | null;
+      if (el?.object?.objectId) {
+        const described = await chrome.debugger.sendCommand({ tabId }, 'DOM.describeNode', {
+          objectId: (el as { object: { objectId: string } }).object.objectId,
+        }).catch(() => null) as { node: { nodeId: number; nodeName: string; attributes?: string[] } } | null;
+        if (described?.node?.nodeName?.toLowerCase() === 'input' &&
+            described.node.attributes?.includes('file')) {
+          nodeId = described.node.nodeId;
+        }
+      }
+    }
+
+    if (nodeId == null && args.selector) {
+      const sel = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
+        nodeId: doc.root.nodeId,
+        selector: args.selector,
+      }).catch(() => null) as { nodeId: number } | null;
+      if (sel?.nodeId) nodeId = sel.nodeId;
+    }
+
+    if (nodeId == null) {
+      // Find first file input
+      const fileInput = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
+        nodeId: doc.root.nodeId,
+        selector: 'input[type="file"]',
+      }).catch(() => null) as { nodeId: number } | null;
+      if (fileInput?.nodeId) nodeId = fileInput.nodeId;
+    }
+
+    if (nodeId == null) return { error: 'No file input found on page' };
+
+    await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
+      files: paths,
+      nodeId,
+    });
+
+    const result: Record<string, unknown> = { uploaded: true, paths_count: paths.length };
+
+    if (args.submit) {
+      try {
+        await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+          expression: `document.querySelector('${args.selector || 'input[type="file"]'}')?.closest('form')?.requestSubmit()`,
+        }).catch(() => null);
+        result.submit_attempted = true;
+      } catch { result.submit_attempted = false; }
+    }
+    return result;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function uploadImage(_sessionId: string, args: {
+  ref_id?: string; selector?: string; tabId?: number; paths?: string[]; submit?: boolean;
+}) {
+  const paths = args.paths || [];
+  for (const p of paths) {
+    const ext = '.' + p.split('.').pop()?.toLowerCase();
+    if (!IMAGE_EXTS.has(ext)) return { error: `upload_image only allows images, got: ${p}` };
+  }
+  return fileUpload(_sessionId, args);
+}
+
 const TOOLS: Record<ToolName, (sessionId: string, args: any) => Promise<unknown>> = {
   fetch_url: fetchUrl,
   tabs_context: tabsContext,
@@ -2692,6 +2910,12 @@ const TOOLS: Record<ToolName, (sessionId: string, args: any) => Promise<unknown>
   key: pressKey,
   save_to_local: saveToLocal,
   extract_markdown: extractMarkdown,
+  javascript_tool: javascriptTool,
+  file_upload: fileUpload,
+  upload_image: uploadImage,
+  shortcuts_list: shortcutsList,
+  shortcuts_execute: shortcutsExecute,
+  resize_window: resizeWindow,
 };
 
 export async function execute(sessionId: string, tool: ToolName, args: Record<string, unknown>) {

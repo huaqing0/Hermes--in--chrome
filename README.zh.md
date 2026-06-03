@@ -57,16 +57,16 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 
 ## 安装
 
-> **开始前确认**：Hermes Agent v0.2.0+ 已在 `127.0.0.1:8642` 运行，并设置 `HERMES_IN_CHROME_BACKEND_PATH`：
+> **开始前确认**：先安装 Hermes Agent v0.2.0+。从解压后的 `hermes-in-chrome` 文件夹里，在 sidepanel 提示启动后端时运行：
 > ```bash
-> export HERMES_IN_CHROME_BACKEND_PATH=/path/to/hermes-in-chrome/backend
-> hermes gateway run
+> npm run backend:ensure
 > ```
+> 这个启动器会自动把 `HERMES_IN_CHROME_BACKEND_PATH` 指向本包自带的 `backend/` bridge。若你手动运行 `hermes gateway run`，需要自己设置这个环境变量。
 
 ### 快速安装（无需开发工具）
 
 1. 到 [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) 页面下载最新的 `hermes-in-chrome.zip`
-2. 解压 → 打开 `chrome://extensions` → 启用**开发者模式** → **加载已解压的扩展程序** → 选解压出来的文件夹
+2. 解压 → 打开 `chrome://extensions` → 启用**开发者模式** → **加载已解压的扩展程序** → 选解压出来的 `hermes-in-chrome/` 文件夹
 3. `Cmd+H` 打开侧边栏 → 按状态条引导操作
 
 ### 开发者安装（如需改代码）
@@ -285,6 +285,8 @@ MV3 manifest 申请了下列权限，每个都有具体用途：
 | `clipboardRead`, `clipboardWrite` | 在向 X / YouTube 等粘贴富文本前快照你的剪贴板，粘贴后恢复。**剪贴板内容永远不会离开本机。** 全 snapshot/restore 不支持时，结果里会标 `clipboard_restore_mode: 'text'`；恢复失败时会标 `clipboard_restore_mode: 'failed'` |
 | `nativeMessaging` | 跟 `hermes-filewriter`（独立 Python 进程）通信以本地落盘。没装就无法用 `save_to_local` |
 | `host_permissions: <all_urls>` | agent 要在你指向的任何 URL 上操作；没法预先知道你会去哪些站 |
+
+更完整的安全边界见 [Threat model](./docs/threat-model.md)。
 
 我们**不会**做的：
 

@@ -4,7 +4,7 @@ import { ws } from './ws';
 import { GATEWAY_HEALTH_URL } from './gateway';
 import * as tools from './tools';
 import * as tg from './tabGroup';
-import type { ExecMode, ProviderRequest, ProviderStatus, SidepanelMessage, SwToSidepanelMessage, ToolName, UserSettings } from '../types/messages';
+import type { ExecMode, ProviderRequest, ProviderStatus, SidepanelMessage, SwToSidepanelMessage, ToolName, ToolPermission, UserSettings } from '../types/messages';
 
 
 // === per-session 运行状态 ===
@@ -14,39 +14,62 @@ const sessionSettings = new Map<string, UserSettings>();
 const providerRequests = new Map<string, (status: ProviderStatus) => void>();
 const approvedToolCalls = new Set<string>();
 
-const WRITE_TOOLS = new Set<ToolName>([
-  'click',
-  'hover',
-  'right_click',
-  'double_click',
-  'drag',
-  'type',
-  'key',
-  'scroll',
-  'scroll_to',
-  'navigate',
-  'open_tab',
-  'close_tab',
-  'save_to_local',
-]);
+// ── 细粒度权限模型 ───────────────────────────────────────
+
+export const TOOL_PERMISSIONS: Record<ToolName, ToolPermission[]> = {
+  fetch_url: ['read'],
+  tabs_context: ['read'],
+  read_page: ['read'],
+  inspect_targets: ['read'],
+  find: ['read'],
+  get_console_logs: ['read','debug'],
+  read_network_requests: ['read','debug'],
+  screenshot: ['read'],
+  visual_inspect: ['read'],
+  extract_markdown: ['read'],
+  wait: ['read'],
+  shortcuts_list: ['read'],
+
+  click: ['action'],
+  hover: ['action'],
+  right_click: ['action'],
+  double_click: ['action'],
+  drag: ['action'],
+  type: ['action','clipboard'],
+  key: ['action'],
+  scroll: ['action'],
+  scroll_to: ['action'],
+  shortcuts_execute: ['action'],
+
+  navigate: ['navigate'],
+  open_tab: ['navigate'],
+  close_tab: ['navigate'],
+
+  save_to_local: ['file_write'],
+  browser_batch: ['action'],
+
+  javascript_tool: ['javascript'],
+  file_upload: ['upload'],
+  upload_image: ['upload'],
+  resize_window: ['window'],
+};
 
 function toolApprovalKey(sessionId: string, callId: string): string {
   return `${sessionId}:${callId}`;
 }
 
 function toolBlockedByMode(mode: ExecMode | undefined, sessionId: string, callId: string, tool: ToolName, _args: Record<string, unknown>): string | null {
+  const perms = TOOL_PERMISSIONS[tool] ?? [];
+  const readOnly = perms.every((p) => p === 'read');
+
   if (mode === 'plan') {
-    if (tool === 'browser_batch') return 'Plan mode blocks browser_batch because it can contain write actions.';
-    if (WRITE_TOOLS.has(tool)) return `Plan mode blocks ${tool}.`;
+    if (!readOnly) return `Plan mode blocks ${tool}.`;
   }
   if (mode === 'approval') {
+    if (readOnly) return null;
     const approvalKey = toolApprovalKey(sessionId, callId);
-    if (approvedToolCalls.has(approvalKey)) {
-      approvedToolCalls.delete(approvalKey);
-      return null;
-    }
-    if (tool === 'browser_batch') return 'Approval mode requires explicit approval before browser_batch.';
-    if (WRITE_TOOLS.has(tool)) return `Approval mode requires explicit approval before ${tool}.`;
+    if (approvedToolCalls.has(approvalKey)) { approvedToolCalls.delete(approvalKey); return null; }
+    return `Approval mode requires explicit approval before ${tool}.`;
   }
   return null;
 }
