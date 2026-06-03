@@ -2689,13 +2689,14 @@ async function javascriptTool(_sessionId: string, args: {
   const timeoutMs = Math.min(args.timeoutMs ?? 1000, 3000);
 
   try {
-    const result = await Promise.race([
+    const raw = await Promise.race([
       cdp.evaluate(tabId, code),
       new Promise<never>((_, rej) =>
         setTimeout(() => rej(new Error(`javascript_tool timed out after ${timeoutMs}ms`)), timeoutMs),
       ),
     ]);
-    return { result: truncateValue(result, 4000), truncated: typeof result === 'string' && result.length > 4000 };
+    const wasTruncated = typeof raw === 'string' && raw.length > 4000;
+    return { result: truncateValue(raw, 4000), wasTruncated };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -2814,43 +2815,58 @@ async function fileUpload(_sessionId: string, args: {
   if (tabId == null) return { error: 'No active tab' };
 
   try {
-    // Use CDP to find file input and set files
-    const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: -1 }) as { root: { nodeId: number } };
+    // Ensure debugger is attached to this tab
+    await cdp.evaluate(tabId, '').catch(() => {});
+
     let nodeId: number | undefined;
 
-    if (args.ref_id) {
-      const el = await chrome.debugger.sendCommand({ tabId }, 'DOM.resolveNode', {
-        backendNodeId: parseInt(args.ref_id) || undefined,
-      }).catch(() => null) as { object?: { objectId?: string } } | null;
-      if (el?.object?.objectId) {
-        const described = await chrome.debugger.sendCommand({ tabId }, 'DOM.describeNode', {
-          objectId: (el as { object: { objectId: string } }).object.objectId,
-        }).catch(() => null) as { node: { nodeId: number; nodeName: string; attributes?: string[] } } | null;
-        if (described?.node?.nodeName?.toLowerCase() === 'input' &&
-            described.node.attributes?.includes('file')) {
-          nodeId = described.node.nodeId;
+    // Strategy 1: ref_id → find via __hermesElementMap → CDP DOM.requestNode
+    if (args.ref_id && !nodeId) {
+      try {
+        const evalResult = await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+          expression: `(function() {
+            const m = window.__hermesElementMap;
+            if (!m) return null;
+            const ref = m[${JSON.stringify(args.ref_id)}];
+            const el = ref && ref.deref ? ref.deref() : ref;
+            return el instanceof Element ? el : null;
+          })()`,
+          returnByValue: false,
+        }) as { result?: { objectId?: string; type?: string } };
+        if (evalResult?.result?.objectId) {
+          const node = await chrome.debugger.sendCommand({ tabId }, 'DOM.requestNode', {
+            objectId: evalResult.result.objectId,
+          }) as { nodeId: number };
+          if (node?.nodeId) nodeId = node.nodeId;
         }
-      }
+      } catch { /* fall through */ }
     }
 
-    if (nodeId == null && args.selector) {
-      const sel = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
-        nodeId: doc.root.nodeId,
-        selector: args.selector,
-      }).catch(() => null) as { nodeId: number } | null;
-      if (sel?.nodeId) nodeId = sel.nodeId;
+    // Strategy 2: selector → CDP DOM.querySelector
+    if (!nodeId && args.selector) {
+      try {
+        const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: 0 }) as { root: { nodeId: number } };
+        const sel = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
+          nodeId: doc.root.nodeId,
+          selector: args.selector,
+        }) as { nodeId: number } | null;
+        if (sel?.nodeId) nodeId = sel.nodeId;
+      } catch { /* fall through */ }
     }
 
-    if (nodeId == null) {
-      // Find first file input
-      const fileInput = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
-        nodeId: doc.root.nodeId,
-        selector: 'input[type="file"]',
-      }).catch(() => null) as { nodeId: number } | null;
-      if (fileInput?.nodeId) nodeId = fileInput.nodeId;
+    // Strategy 3: find first file input
+    if (!nodeId) {
+      try {
+        const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: 0 }) as { root: { nodeId: number } };
+        const fi = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
+          nodeId: doc.root.nodeId,
+          selector: 'input[type="file"]',
+        }) as { nodeId: number } | null;
+        if (fi?.nodeId) nodeId = fi.nodeId;
+      } catch { /* fall through */ }
     }
 
-    if (nodeId == null) return { error: 'No file input found on page' };
+    if (!nodeId) return { error: 'No file input found on page' };
 
     await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
       files: paths,
@@ -2861,9 +2877,11 @@ async function fileUpload(_sessionId: string, args: {
 
     if (args.submit) {
       try {
+        // Escape selector for safe interpolation into JS string
+        const safeSelector = (args.selector || 'input[type="file"]').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
-          expression: `document.querySelector('${args.selector || 'input[type="file"]'}')?.closest('form')?.requestSubmit()`,
-        }).catch(() => null);
+          expression: `document.querySelector('${safeSelector}')?.closest('form')?.requestSubmit()`,
+        }).catch(() => {});
         result.submit_attempted = true;
       } catch { result.submit_attempted = false; }
     }
