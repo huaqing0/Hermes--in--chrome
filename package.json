@@ -4,7 +4,7 @@
   "description": "Hermes Agent 住在 Chrome 里 — 浏览器自动化扩展。",
   "type": "module",
   "license": "MIT",
-  "author": "花清",
+  "author": "花清Hua Qing",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/huaqing0/hermes-in-chrome.git"

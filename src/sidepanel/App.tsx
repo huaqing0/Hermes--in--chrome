@@ -1551,7 +1551,7 @@ export default function App() {
               <div className="logo-text">
                 <div className="logo-name">HERMES</div>
                 <div className="logo-sub">
-                  花清 Hua Qing
+                  花清Hua Qing
                 </div>
                 <div className="logo-meta">
                   <span className="ver">v0.3</span>
