@@ -4,7 +4,7 @@ This directory holds screenshots, GIFs, and other visual assets for the top-leve
 
 ## Current assets
 
-- `sidepanel.png` — README hero screenshot.
+- `hermes-demo.gif` — README hero demo.
 
 ## Optional next assets
 

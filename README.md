@@ -11,8 +11,6 @@
 
 > **Status**: early preview. **macOS + Chrome** is the primary supported runtime. **Windows + Chrome** is experimental — Native Messaging host registration, backend startup, and `save_to_local` are implemented but still need real Windows validation. Linux is not yet supported.
 
-![Hermes sidepanel](docs/sidepanel.png)
-
 ![Hermes in Chrome demo](docs/hermes-demo.gif)
 
 Demo video and launch post: [x.com/xiaodingdang664/status/2062585330893746256](https://x.com/xiaodingdang664/status/2062585330893746256?s=20)

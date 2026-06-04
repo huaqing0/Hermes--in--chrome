@@ -11,8 +11,6 @@
 
 > **当前状态**：早期预览版。**macOS + Chrome** 是主支持运行环境；**Windows + Chrome** 为 experimental —— Native Messaging host 注册、backend 启动和 `save_to_local` 已实现，但还需要真实 Windows 验证。Linux 暂不支持。
 
-![Hermes sidepanel](docs/sidepanel.png)
-
 ![Hermes in Chrome 演示](docs/hermes-demo.gif)
 
 演示视频与推广帖：[x.com/xiaodingdang664/status/2062585330893746256](https://x.com/xiaodingdang664/status/2062585330893746256?s=20)
