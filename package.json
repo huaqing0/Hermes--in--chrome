@@ -7,12 +7,12 @@
   "author": "花清Hua Qing",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/huaqing0/hermes-in-chrome.git"
+    "url": "git+https://github.com/huaqing0/Hermes--in--chrome.git"
   },
   "bugs": {
-    "url": "https://github.com/huaqing0/hermes-in-chrome/issues"
+    "url": "https://github.com/huaqing0/Hermes--in--chrome/issues"
   },
-  "homepage": "https://github.com/huaqing0/hermes-in-chrome#readme",
+  "homepage": "https://github.com/huaqing0/Hermes--in--chrome#readme",
   "keywords": [
     "chrome-extension",
     "ai-agent",

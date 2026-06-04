@@ -1,12 +1,15 @@
 # Hermes in Chrome
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![CI](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml/badge.svg)](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
 
 > An AI agent that lives in your Chrome sidebar — it can browse the web, read pages, click buttons, fill forms, take screenshots, and save files. You talk to it like you'd talk to a smart colleague who can see and control your browser.
 >
 > [中文版 →](./README.zh.md)
+
+> **Status**: early preview. Full install/runtime support is currently **macOS + Chrome only** because the Native Messaging host installer and local filewriter flow target macOS. Windows/Linux support is not ready yet.
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
@@ -27,14 +30,12 @@ The agent opens its own tab group, reads pages through the accessibility tree, t
 |-------------|----------------|
 | **Hermes Agent** v0.2.0+ | [github.com/huaqing0/hermes-agent](https://github.com/huaqing0/hermes-agent) — the backend that runs locally and powers the AI |
 | **An LLM API key** | DeepSeek, Anthropic Claude, Google Gemini, OpenAI, or any OpenAI-compatible provider |
-| **macOS** | Currently macOS-only. Windows/Linux native-messaging support is on the roadmap |
+| **macOS** | Required for this release. Windows/Linux native-messaging support is not implemented yet |
 | **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
 
 No cloud account required — everything runs on your machine. Your API key talks directly to your chosen LLM provider.
 
 > **License**: [MIT](./LICENSE).
-
-![Hermes sidepanel](docs/sidepanel.png)
 
 ## Three core capabilities
 
@@ -63,7 +64,7 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 
 ### Quick start (no dev tools needed)
 
-1. Go to [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) → download `hermes-in-chrome.zip`
+1. Go to [Releases](https://github.com/huaqing0/Hermes--in--chrome/releases) → download `hermes-in-chrome.zip`
 2. Unzip → open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick the unzipped `hermes-in-chrome/` folder
 3. Press `Cmd+H` to open the sidepanel → follow the status bar prompts
 
@@ -72,14 +73,14 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 1. **Clone + build**:
 
    ```bash
-   git clone https://github.com/huaqing0/hermes-in-chrome.git
+   git clone https://github.com/huaqing0/Hermes--in--chrome.git
    cd hermes-in-chrome
    npm install && npm run build
    ```
 
 2. **Load the extension in Chrome**: open `chrome://extensions` → toggle **Developer mode** → click **Load unpacked** → pick the `dist/` directory generated above.
 
-3. **Press `Cmd+H` (Mac) / `Ctrl+H` (Win/Linux)** to open the sidepanel — then **follow the prompts in the status bar at the top**. You don't need to copy your extension ID by hand or hunt for command names in the README.
+3. **Press `Cmd+H`** to open the sidepanel — then **follow the prompts in the status bar at the top**. You don't need to copy your extension ID by hand or hunt for command names in the README.
 
 The status bar walks you through:
 
@@ -229,6 +230,7 @@ What we do **not** do:
 
 **This is a Chrome extension frontend**; it needs a backend:
 
+- Full runtime support is currently **macOS only**. The MV3 extension UI is browser-based, but the Native Messaging host installer and local filewriter flow target Chrome on macOS.
 - **Backend**: [Hermes Agent](https://github.com/huaqing0/hermes-agent) (third-party project, maintained separately), listening on `127.0.0.1:8642`, exposing `/api/ws/extension`
 - The 5 provider handlers (`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`) and the browser tool bridge need to be registered inside Hermes Agent
 - The extension itself **cannot** spawn local Python processes; run `npm run backend:ensure` from your terminal, or `npm run backend:watch` for a foreground watchdog
@@ -257,6 +259,13 @@ The extension talks to the backend over WebSocket; message shapes live in [`src/
 
 - `hello` / `user_message` / `tool_result` / `tool_error` / `stop` / `ping` (client → server)
 - `thinking_delta` / `text_delta` / `tool_call` / `tool_approval_request` / `message_complete` / `error` / `provider_*_result` / `pong` (server → client)
+
+## Known limitations
+
+- macOS + Chrome only in this release; Windows/Linux native-messaging installers are not implemented yet.
+- The extension requires a local Hermes Agent backend. It cannot run browser-agent tasks by itself.
+- Hermes in Chrome is not published on the Chrome Web Store yet; install from a release zip or build from source.
+- Chrome shows a debugger-control banner while the agent is driving a page. This is expected for tools that use Chrome DevTools Protocol.
 
 ## Project layout
 

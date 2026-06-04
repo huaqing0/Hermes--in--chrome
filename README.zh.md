@@ -1,12 +1,15 @@
 # Hermes in Chrome
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![CI](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml/badge.svg)](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
 
 > 一个住在 Chrome 侧边栏里的 AI 助手 — 能浏览网页、阅读页面、点击按钮、填写表单、截图、保存文件。你跟它聊天，它操作浏览器。
 >
 > [← English version](./README.md)
+
+> **当前状态**：早期预览版。完整安装和运行目前只支持 **macOS + Chrome**，因为 Native Messaging host 安装器和本地 filewriter 流程现在只按 macOS 实现。Windows/Linux 支持还没做好。
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
@@ -27,7 +30,7 @@ Agent 会自己开一组 Tab，通过无障碍树读页面，用 Chrome DevTools
 |------|---------|
 | **Hermes Agent** v0.2.0+ | [github.com/huaqing0/hermes-agent](https://github.com/huaqing0/hermes-agent) — 本地运行的后端，驱动 AI |
 | **一个 LLM API Key** | DeepSeek、Anthropic Claude、Google Gemini、OpenAI 或任何兼容 OpenAI 接口的服务商 |
-| **macOS** | 目前仅支持 macOS。Windows/Linux 的原生消息主机支持在计划中 |
+| **macOS** | 当前版本必需。Windows/Linux 的 Native Messaging 安装器还没实现 |
 | **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
 
 无需注册云端账号——所有数据都在你本机。API Key 直连你选的 LLM 服务商。
@@ -41,8 +44,6 @@ Agent 会自己开一组 Tab，通过无障碍树读页面，用 Chrome DevTools
 1. **住在网页里** — Chrome sidepanel 永驻右侧，AI 流式回复
 2. **实时感知页面** — 每次 action 后 agent 主动 `read_page` 拿 a11y tree
 3. **自主开 tab** — 在专属 Hermes Tab Group 里串/并行调研，不打扰用户
-
-![Hermes sidepanel](docs/sidepanel.png)
 
 ## 架构
 
@@ -65,7 +66,7 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 
 ### 快速安装（无需开发工具）
 
-1. 到 [Releases](https://github.com/huaqing0/hermes-in-chrome/releases) 页面下载最新的 `hermes-in-chrome.zip`
+1. 到 [Releases](https://github.com/huaqing0/Hermes--in--chrome/releases) 页面下载最新的 `hermes-in-chrome.zip`
 2. 解压 → 打开 `chrome://extensions` → 启用**开发者模式** → **加载已解压的扩展程序** → 选解压出来的 `hermes-in-chrome/` 文件夹
 3. `Cmd+H` 打开侧边栏 → 按状态条引导操作
 
@@ -76,14 +77,14 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 1. **克隆 + 构建**：
 
    ```bash
-   git clone https://github.com/huaqing0/hermes-in-chrome.git
+   git clone https://github.com/huaqing0/Hermes--in--chrome.git
    cd hermes-in-chrome
    npm install && npm run build
    ```
 
 2. **Chrome 加载扩展**：`chrome://extensions` → 右上角开「开发者模式」→ 「加载已解压的扩展程序」→ 选本项目的 `dist/` 目录
 
-3. **`Cmd+H` / `Ctrl+H` 打开 sidepanel** —— 按顶部状态条的引导一步步跑命令即可，**不需要自己抄扩展 ID 或翻 README 找命令**
+3. **`Cmd+H` 打开 sidepanel** —— 按顶部状态条的引导一步步跑命令即可，**不需要自己抄扩展 ID 或翻 README 找命令**
 
 状态条会依次引导你：
 
@@ -299,6 +300,7 @@ MV3 manifest 申请了下列权限，每个都有具体用途：
 
 **这是一个 Chrome 扩展前端**，需要配套后端：
 
+- 当前完整运行支持只覆盖 **macOS**。MV3 扩展 UI 本身是浏览器侧代码，但 Native Messaging host 安装器和本地 filewriter 流程现在只按 macOS Chrome 实现。
 - **后端**：Hermes Agent（第三方项目，独立维护），监听 `127.0.0.1:8642`，提供 `/api/ws/extension` WebSocket endpoint
 - 后端的 5 个 provider handler（`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`）以及浏览器工具桥需要在 Hermes Agent 里注册
 - 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动，或用 `npm run backend:watch` 持续守护
@@ -310,6 +312,13 @@ MV3 manifest 申请了下列权限，每个都有具体用途：
 
 - `hello` / `user_message` / `tool_result` / `tool_error` / `stop` / `ping`（client → server）
 - `thinking_delta` / `text_delta` / `tool_call` / `tool_approval_request` / `message_complete` / `error` / `provider_*_result` / `pong`（server → client）
+
+## 已知限制
+
+- 当前版本只支持 macOS + Chrome；Windows/Linux 的 Native Messaging 安装器还没实现。
+- 扩展依赖本地 Hermes Agent 后端，单独安装扩展不能直接跑 browser-agent 任务。
+- Hermes in Chrome 还没有上架 Chrome Web Store；请从 release zip 安装，或从源码构建。
+- agent 操作页面时 Chrome 会显示 debugger 控制横幅，这是使用 Chrome DevTools Protocol 驱动页面时的正常现象。
 
 ## 项目结构
 
