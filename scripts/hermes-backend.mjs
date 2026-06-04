@@ -105,7 +105,22 @@ function clearStaleGatewayLock() {
   console.log(`Backup: ${backupPath}`);
 }
 
+function isWindows() {
+  return process.platform === 'win32';
+}
+
 function commandExists(command) {
+  if (isWindows()) {
+    const result = spawnSync('where.exe', [command], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (result.status === 0) {
+      const lines = result.stdout.trim().split(/\r?\n/);
+      return lines[0] || '';
+    }
+    return '';
+  }
   const result = spawnSync('sh', ['-lc', `command -v ${JSON.stringify(command)}`], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
@@ -115,7 +130,9 @@ function commandExists(command) {
 
 function resolveGatewayCommand() {
   const agentDir = process.env.HERMES_AGENT_DIR || path.join(hermesHome, 'hermes-agent');
-  const venvPython = path.join(agentDir, 'venv', 'bin', 'python');
+  const venvPython = isWindows()
+    ? path.join(agentDir, 'venv', 'Scripts', 'python.exe')
+    : path.join(agentDir, 'venv', 'bin', 'python');
 
   if (fileExists(venvPython)) {
     return {

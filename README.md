@@ -9,7 +9,7 @@
 >
 > [中文版 →](./README.zh.md)
 
-> **Status**: early preview. Full install/runtime support is currently **macOS + Chrome only** because the Native Messaging host installer and local filewriter flow target macOS. Windows/Linux support is not ready yet.
+> **Status**: early preview. Full install/runtime support is currently **macOS + Chrome**. **Windows support is experimental** — basic functionality (Native Messaging host, backend startup, save_to_local) is implemented but not fully tested. Linux is not yet supported.
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
@@ -30,7 +30,7 @@ The agent opens its own tab group, reads pages through the accessibility tree, t
 |-------------|----------------|
 | **Hermes Agent** v0.2.0+ | [github.com/huaqing0/hermes-agent](https://github.com/huaqing0/hermes-agent) — the backend that runs locally and powers the AI |
 | **An LLM API key** | DeepSeek, Anthropic Claude, Google Gemini, OpenAI, or any OpenAI-compatible provider |
-| **macOS** | Required for this release. Windows/Linux native-messaging support is not implemented yet |
+| **macOS or Windows** | macOS: full support. Windows: experimental (see below) |
 | **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
 
 No cloud account required — everything runs on your machine. Your API key talks directly to your chosen LLM provider.
@@ -260,9 +260,38 @@ The extension talks to the backend over WebSocket; message shapes live in [`src/
 - `hello` / `user_message` / `tool_result` / `tool_error` / `stop` / `ping` (client → server)
 - `thinking_delta` / `text_delta` / `tool_call` / `tool_approval_request` / `message_complete` / `error` / `provider_*_result` / `pong` (server → client)
 
+### Windows support (experimental)
+
+On Windows, the Native Messaging host is registered via the registry. **Node.js** and **Python 3** are required on PATH.
+
+```powershell
+# Install the host
+npm run native-host:install -- <your-extension-id>
+
+# Check status
+npm run native-host:status
+
+# Verify registry
+reg query HKCU\Software\Google\Chrome\NativeMessagingHosts\com.hermes.filewriter
+
+# Uninstall
+npm run native-host:uninstall
+```
+
+Backend startup uses the same `npm run backend:ensure` command (the venv Python path is `venv\Scripts\python.exe` on Windows).
+
+**Known limitations**:
+- Windows support is experimental and not fully tested
+- Only Chrome is supported (Chromium-derived browsers may have different registry paths)
+- Requires a real Windows + Chrome environment for validation
+
+See [docs/windows.md](./docs/windows.md) for details.
+
+---
+
 ## Known limitations
 
-- macOS + Chrome only in this release; Windows/Linux native-messaging installers are not implemented yet.
+- macOS is the primary supported platform. Windows support is experimental; Linux is not yet supported.
 - The extension requires a local Hermes Agent backend. It cannot run browser-agent tasks by itself.
 - Hermes in Chrome is not published on the Chrome Web Store yet; install from a release zip or build from source.
 - Chrome shows a debugger-control banner while the agent is driving a page. This is expected for tools that use Chrome DevTools Protocol.

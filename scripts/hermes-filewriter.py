@@ -27,6 +27,12 @@ from pathlib import Path
 LOG_PATH = Path.home() / ".hermes" / "logs" / "hermes-filewriter.log"
 INSTALL_META_PATH = Path.home() / ".hermes" / "hermes-in-chrome.json"
 
+_IS_WINDOWS = os.name == "nt"
+if _IS_WINDOWS:
+    import msvcrt
+    msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+    msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+
 
 def _load_install_meta() -> dict:
     try:
@@ -49,11 +55,51 @@ DENY_SYSTEM_PREFIXES = (
     "/private/var/db",
 )
 
+_WINDOWS_DENY_SYSTEM_PREFIXES = (
+    r"C:\Windows",
+    r"C:\Program Files",
+    r"C:\Program Files (x86)",
+    r"C:\ProgramData",
+)
+
+_WINDOWS_DENY_SENSITIVE_FILES = {
+    ".git-credentials",
+    ".npmrc",
+    ".pypirc",
+    ".env",
+    "Microsoft.PowerShell_profile.ps1",
+    "profile.ps1",
+}
+
 
 def _user_sensitive_paths() -> tuple:
     """Per-user paths agents should never touch: credentials, browser
     profiles, shell rc files, Hermes' own config."""
     home = str(Path.home().resolve())
+    if _IS_WINDOWS:
+        appdata = os.environ.get("APPDATA", "")
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+        userprofile = os.environ.get("USERPROFILE", home)
+        paths = [
+            # Credentials / keys
+            f"{home}\\.ssh",
+            f"{home}\\.aws",
+            f"{home}\\.gnupg",
+            f"{home}\\.docker",
+            # Browser profiles
+            f"{localappdata}\\Google\\Chrome",
+            f"{localappdata}\\Chromium",
+        ]
+        if appdata:
+            paths.append(f"{appdata}\\Mozilla\\Firefox")
+        if userprofile:
+            paths.append(f"{userprofile}\\Documents\\WindowsPowerShell")
+        # Also add check for APPDATA-based PowerShell
+        if appdata:
+            paths.append(f"{appdata}\\Microsoft\\Windows\\PowerShell")
+        paths.append(f"{home}\\.hermes")
+        return tuple(paths)
+
     return (
         # Credentials / keys
         f"{home}/.ssh",
@@ -130,23 +176,67 @@ def send_message(obj) -> None:
     sys.stdout.buffer.flush()
 
 
+def _norm_path_for_cmp(p: str) -> str:
+    """Normalize a path for comparison: lowercase on Windows, as-is on POSIX."""
+    return p.lower() if _IS_WINDOWS else p
+
+
 def _check_deny(resolved_str: str) -> None:
     """Uniform exact-or-prefix match; works for both directories and single files."""
-    for deny in DENY_SYSTEM_PREFIXES + _user_sensitive_paths():
-        if resolved_str == deny or resolved_str.startswith(deny + "/"):
+    cmp_path = _norm_path_for_cmp(resolved_str)
+
+    # System prefixes (platform-specific)
+    prefixes = _WINDOWS_DENY_SYSTEM_PREFIXES if _IS_WINDOWS else DENY_SYSTEM_PREFIXES
+    for deny in prefixes:
+        deny_cmp = _norm_path_for_cmp(deny)
+        # Exact match or prefix with separator
+        sep = "\\" if _IS_WINDOWS else "/"
+        if cmp_path == deny_cmp or cmp_path.startswith(deny_cmp + sep):
             raise ValueError(f"refusing to write protected path: {deny}")
+
+    # User-sensitive paths
+    for deny in _user_sensitive_paths():
+        deny_cmp = _norm_path_for_cmp(deny)
+        sep = "\\" if _IS_WINDOWS else "/"
+        if cmp_path == deny_cmp or cmp_path.startswith(deny_cmp + sep):
+            raise ValueError(f"refusing to write protected path: {deny}")
+
+    # Windows: check sensitive filenames
+    if _IS_WINDOWS:
+        fname = _norm_path_for_cmp(Path(resolved_str).name)
+        for s in _WINDOWS_DENY_SENSITIVE_FILES:
+            if fname == _norm_path_for_cmp(s):
+                raise ValueError(f"refusing to write sensitive file: {s}")
 
 
 def resolve_safe_path(raw: str) -> Path:
     if not raw or not isinstance(raw, str):
         raise ValueError("path is required")
+
+    # Windows: reject UNC paths and \\?\ device paths
+    if _IS_WINDOWS:
+        cleaned = raw.strip()
+        if cleaned.startswith("\\\\"):
+            raise ValueError(f"refusing UNC path: {raw}")
+        if cleaned.startswith("\\\\?\\"):
+            raise ValueError(f"refusing device path: {raw}")
+
     expanded = os.path.expanduser(os.path.expandvars(raw))
     p = Path(expanded)
     if not p.is_absolute():
         raise ValueError(f"path must be absolute, got: {raw}")
     resolved = p.resolve(strict=False)
-    if resolved == Path("/").resolve():
-        raise ValueError("refusing to write to root directory")
+
+    # Drive / filesystem root check
+    if _IS_WINDOWS:
+        resolved_str = str(resolved)
+        # Drive root, e.g. C:\
+        if len(resolved_str) == 3 and resolved_str[1] == ":" and resolved_str[2] == "\\":
+            raise ValueError("refusing to write to drive root")
+    else:
+        if resolved == Path("/").resolve():
+            raise ValueError("refusing to write to root directory")
+
     _check_deny(str(resolved))
     return resolved
 

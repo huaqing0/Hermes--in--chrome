@@ -645,10 +645,32 @@ interface OnboardingBarProps {
   onOpenSettings: () => void;
 }
 
+function detectPlatform(): 'win32' | 'darwin' | 'linux' | 'unknown' {
+  try {
+    const nav = navigator as any;
+    const p = nav?.userAgentData?.platform || nav?.platform || '';
+    if (/win/i.test(p)) return 'win32';
+    if (/mac/i.test(p)) return 'darwin';
+    if (/linux/i.test(p)) return 'linux';
+  } catch {}
+  return 'unknown';
+}
+
+function quotePowerShellSingle(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 function buildOneliner(repoRoot: string | null, cmd: string, placeholder: string): { line: string; needsManualCd: boolean } {
+  const plat = detectPlatform();
   if (repoRoot) {
+    if (plat === 'win32') {
+      return { line: `Set-Location -LiteralPath ${quotePowerShellSingle(repoRoot)}; ${cmd}`, needsManualCd: false };
+    }
     const quoted = `'${repoRoot.replace(/'/g, `'\\''`)}'`;
     return { line: `cd ${quoted} && ${cmd}`, needsManualCd: false };
+  }
+  if (plat === 'win32') {
+    return { line: `Set-Location -LiteralPath ${quotePowerShellSingle(placeholder)}; ${cmd}`, needsManualCd: true };
   }
   return { line: `cd ${placeholder} && ${cmd}`, needsManualCd: true };
 }

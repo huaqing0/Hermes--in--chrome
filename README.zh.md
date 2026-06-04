@@ -9,7 +9,7 @@
 >
 > [← English version](./README.md)
 
-> **当前状态**：早期预览版。完整安装和运行目前只支持 **macOS + Chrome**，因为 Native Messaging host 安装器和本地 filewriter 流程现在只按 macOS 实现。Windows/Linux 支持还没做好。
+> **当前状态**：早期预览版。完整安装和运行目前只支持 **macOS + Chrome**。**Windows 支持为 experimental** —— 基础功能（Native Messaging host、backend 启动、save_to_local）已实现，但未经完整测试。Linux 暂不支持。
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
@@ -30,7 +30,7 @@ Agent 会自己开一组 Tab，通过无障碍树读页面，用 Chrome DevTools
 |------|---------|
 | **Hermes Agent** v0.2.0+ | [github.com/huaqing0/hermes-agent](https://github.com/huaqing0/hermes-agent) — 本地运行的后端，驱动 AI |
 | **一个 LLM API Key** | DeepSeek、Anthropic Claude、Google Gemini、OpenAI 或任何兼容 OpenAI 接口的服务商 |
-| **macOS** | 当前版本必需。Windows/Linux 的 Native Messaging 安装器还没实现 |
+| **macOS 或 Windows** | macOS 完整支持；Windows experimental（见下方说明） |
 | **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
 
 无需注册云端账号——所有数据都在你本机。API Key 直连你选的 LLM 服务商。
@@ -313,9 +313,38 @@ MV3 manifest 申请了下列权限，每个都有具体用途：
 - `hello` / `user_message` / `tool_result` / `tool_error` / `stop` / `ping`（client → server）
 - `thinking_delta` / `text_delta` / `tool_call` / `tool_approval_request` / `message_complete` / `error` / `provider_*_result` / `pong`（server → client）
 
+### Windows 支持（experimental）
+
+在 Windows 上，Native Messaging host 通过注册表登记。需要 **Node.js** 和 **Python 3** 在 PATH 中。
+
+```powershell
+# 安装 host
+npm run native-host:install -- <你的扩展ID>
+
+# 检查状态
+npm run native-host:status
+
+# 验证注册表
+reg query HKCU\Software\Google\Chrome\NativeMessagingHosts\com.hermes.filewriter
+
+# 卸载
+npm run native-host:uninstall
+```
+
+后端启动同样使用 `npm run backend:ensure`（Windows 上 venv Python 路径为 `venv\Scripts\python.exe`）。
+
+**已知限制**：
+- Windows 支持为 experimental，未经完整测试
+- 只支持 Chrome（不支持 Edge、Brave 等 Chromium 衍生浏览器的注册表路径）
+- 需要真实 Windows + Chrome 环境验证
+
+详细说明见 [docs/windows.md](./docs/windows.md)。
+
+---
+
 ## 已知限制
 
-- 当前版本只支持 macOS + Chrome；Windows/Linux 的 Native Messaging 安装器还没实现。
+- macOS 为主支持平台，Windows 为 experimental；Linux 暂不支持。
 - 扩展依赖本地 Hermes Agent 后端，单独安装扩展不能直接跑 browser-agent 任务。
 - Hermes in Chrome 还没有上架 Chrome Web Store；请从 release zip 安装，或从源码构建。
 - agent 操作页面时 Chrome 会显示 debugger 控制横幅，这是使用 Chrome DevTools Protocol 驱动页面时的正常现象。
