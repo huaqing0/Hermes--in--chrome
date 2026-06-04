@@ -13,6 +13,10 @@
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
+![Hermes in Chrome demo](docs/hermes-demo.gif)
+
+Demo video and launch post: [x.com/xiaodingdang664/status/2062585330893746256](https://x.com/xiaodingdang664/status/2062585330893746256?s=20)
+
 ## What it does
 
 Use Hermes for tasks that are awkward for a normal chat agent because they depend on the page, video, account, or dashboard already open in your browser:

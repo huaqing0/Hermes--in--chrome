@@ -13,6 +13,10 @@
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
+![Hermes in Chrome 演示](docs/hermes-demo.gif)
+
+演示视频与推广帖：[x.com/xiaodingdang664/status/2062585330893746256](https://x.com/xiaodingdang664/status/2062585330893746256?s=20)
+
 ## 能干什么
 
 Hermes 适合做普通聊天 Agent 很难做好的网页现场任务：它依赖你当前打开的页面、视频、账号和后台数据。

@@ -31,7 +31,7 @@ jobs:
           cp scripts/check-bridge.mjs scripts/hermes-backend.mjs scripts/hermes-filewriter.py scripts/install-native-host.mjs release/hermes-in-chrome/scripts/
           cp package.json README.md README.zh.md LICENSE SECURITY.md CONTRIBUTING.md .env.example release/hermes-in-chrome/
           mkdir -p release/hermes-in-chrome/docs
-          cp docs/README.md docs/sidepanel.png docs/threat-model.md docs/windows.md release/hermes-in-chrome/docs/
+          cp docs/README.md docs/sidepanel.png docs/hermes-demo.gif docs/threat-model.md docs/windows.md release/hermes-in-chrome/docs/
           cd release
           zip -r ../hermes-in-chrome.zip hermes-in-chrome
 
