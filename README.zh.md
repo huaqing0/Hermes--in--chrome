@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![CI](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml/badge.svg)](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
-[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20experimental-lightgrey.svg)](./docs/windows.md)
 
 > 一个住在 Chrome 侧边栏里的 AI 助手 — 能浏览网页、阅读页面、点击按钮、填写表单、截图、保存文件。你跟它聊天，它操作浏览器。
 >
 > [← English version](./README.md)
 
-> **当前状态**：早期预览版。完整安装和运行目前只支持 **macOS + Chrome**。**Windows 支持为 experimental** —— 基础功能（Native Messaging host、backend 启动、save_to_local）已实现，但未经完整测试。Linux 暂不支持。
+> **当前状态**：早期预览版。**macOS + Chrome** 是主支持运行环境；**Windows + Chrome** 为 experimental —— Native Messaging host 注册、backend 启动和 `save_to_local` 已实现，但还需要真实 Windows 验证。Linux 暂不支持。
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
@@ -68,7 +68,7 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 
 1. 到 [Releases](https://github.com/huaqing0/Hermes--in--chrome/releases) 页面下载最新的 `hermes-in-chrome.zip`
 2. 解压 → 打开 `chrome://extensions` → 启用**开发者模式** → **加载已解压的扩展程序** → 选解压出来的 `hermes-in-chrome/` 文件夹
-3. `Cmd+H` 打开侧边栏 → 按状态条引导操作
+3. macOS 用 `Cmd+H`，Windows 用 `Ctrl+H` 打开侧边栏 → 按状态条引导操作
 
 ### 开发者安装（如需改代码）
 
@@ -84,7 +84,7 @@ Service Worker  ←→ WebSocket ←→ Hermes Agent (Python)
 
 2. **Chrome 加载扩展**：`chrome://extensions` → 右上角开「开发者模式」→ 「加载已解压的扩展程序」→ 选本项目的 `dist/` 目录
 
-3. **`Cmd+H` 打开 sidepanel** —— 按顶部状态条的引导一步步跑命令即可，**不需要自己抄扩展 ID 或翻 README 找命令**
+3. **macOS 用 `Cmd+H`，Windows 用 `Ctrl+H` 打开 sidepanel** —— 按顶部状态条的引导一步步跑命令即可，**不需要自己抄扩展 ID 或翻 README 找命令**
 
 状态条会依次引导你：
 
@@ -231,7 +231,7 @@ MINIMAX_API_KEY=...
 
 ## 保存抓取内容到本地（Native Messaging）
 
-`save_to_local` 让 agent 把 `fetch_url` 的 HTML、`read_page` 的 a11y 树、`screenshot` 的截图、`extract_markdown` 的 Markdown 等内容写到本地文件。路径可以是用户文件系统下的任何位置（`~/Downloads/`、`/Volumes/your-ssd/`、`/tmp/` 等都可以），无需任何配置。Chrome 扩展本身不能直接写文件，所以走 Native Messaging 调用一个本地 Python 小进程 `hermes-filewriter.py`。
+`save_to_local` 让 agent 把 `fetch_url` 的 HTML、`read_page` 的 a11y 树、`screenshot` 的截图、`extract_markdown` 的 Markdown 等内容写到本地文件。路径可以是用户文件系统下的任何位置（`~/Downloads/`、`C:\Users\you\Downloads\`、`/Volumes/your-ssd/`、`/tmp/` 等都可以），无需任何配置。Chrome 扩展本身不能直接写文件，所以走 Native Messaging 调用一个本地 Python 小进程 `hermes-filewriter.py`。
 
 **首次安装（一次性）**：推荐打开 sidepanel，按顶部状态条引导走，**它会自动填好你的扩展 ID 并给出一键复制的命令**。如果你想手动跑：
 
@@ -244,17 +244,19 @@ MINIMAX_API_KEY=...
 
 这个脚本会：
 
-- 把 `scripts/hermes-filewriter.py` 复制到 `~/.hermes/native-messaging/`
-- 在 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.hermes.filewriter.json` 写入 host manifest，并把你的扩展 ID 加进 `allowed_origins`
+- 把 `scripts/hermes-filewriter.py` 复制到用户级 Hermes Native Messaging 目录（macOS 是 `~/.hermes/native-messaging/`，Windows 是 `%USERPROFILE%\.hermes\native-messaging\`）
+- macOS：在 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.hermes.filewriter.json` 写入 host manifest，并把你的扩展 ID 加进 `allowed_origins`
+- Windows experimental：在 `%USERPROFILE%\.hermes\native-messaging\com.hermes.filewriter.json` 写入 manifest，并注册 `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.hermes.filewriter`
+- 把项目根目录记录到 macOS 的 `~/.hermes/hermes-in-chrome.json` 或 Windows 的 `%USERPROFILE%\.hermes\hermes-in-chrome.json`，这样 sidepanel 可以生成已解析路径的 `cd ...` / PowerShell `Set-Location ...` 命令
 - 之后在 Chrome 重新加载扩展即可生效
 
 **安全边界**：
 
-- host 接受绝对路径并展开 `~`，可以写到用户文件系统下任何位置；系统目录（`/System`、`/usr` 等）和敏感用户目录（`~/.ssh`、`~/.aws`、浏览器 profile、`~/.zshrc` 等 shell rc）始终被拒绝，防止 prompt injection 取走凭据或劫持 shell
+- host 接受绝对路径并展开 `~`，可以写到用户文件系统下任何位置；系统目录（`/System`、`/usr`、`/etc`、`C:\Windows`、`C:\Program Files` 等）和敏感用户目录（`~/.ssh`、`~/.aws`、浏览器 profile、shell rc、PowerShell profile 等）始终被拒绝，防止 prompt injection 取走凭据或劫持 shell
 - 默认拒绝覆盖已有文件；确实要覆盖时，工具调用必须显式传 `overwrite=true`
 - Native Messaging 请求信封上限 64 MiB；base64 编码的二进制数据需留出编码膨胀空间，实际可写内容略小于 64 MB
 - host 返回的消息非常小，远低于 Chrome 对 native host→extension 方向的 1 MiB 限制
-- 日志写到 `~/.hermes/logs/hermes-filewriter.log`
+- 日志在 macOS 写到 `~/.hermes/logs/hermes-filewriter.log`，Windows 写到 `%USERPROFILE%\.hermes\logs\hermes-filewriter.log`
 
 **典型调用**：
 
@@ -300,7 +302,7 @@ MV3 manifest 申请了下列权限，每个都有具体用途：
 
 **这是一个 Chrome 扩展前端**，需要配套后端：
 
-- 当前完整运行支持只覆盖 **macOS**。MV3 扩展 UI 本身是浏览器侧代码，但 Native Messaging host 安装器和本地 filewriter 流程现在只按 macOS Chrome 实现。
+- **macOS + Chrome** 是主支持运行环境。**Windows + Chrome** 为 experimental；Native Messaging host 注册、本地 filewriter 和 backend 启动已实现，但仍需要真实 Windows 验证。Linux 暂不支持。
 - **后端**：Hermes Agent（第三方项目，独立维护），监听 `127.0.0.1:8642`，提供 `/api/ws/extension` WebSocket endpoint
 - 后端的 5 个 provider handler（`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`）以及浏览器工具桥需要在 Hermes Agent 里注册
 - 扩展本身不能直接启动本地 Python 进程；请在本地终端运行 `npm run backend:ensure` 做自动检测/启动，或用 `npm run backend:watch` 持续守护

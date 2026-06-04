@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![CI](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml/badge.svg)](https://github.com/huaqing0/Hermes--in--chrome/actions/workflows/ci.yml)
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
-[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20experimental-lightgrey.svg)](./docs/windows.md)
 
 > An AI agent that lives in your Chrome sidebar — it can browse the web, read pages, click buttons, fill forms, take screenshots, and save files. You talk to it like you'd talk to a smart colleague who can see and control your browser.
 >
 > [中文版 →](./README.zh.md)
 
-> **Status**: early preview. Full install/runtime support is currently **macOS + Chrome**. **Windows support is experimental** — basic functionality (Native Messaging host, backend startup, save_to_local) is implemented but not fully tested. Linux is not yet supported.
+> **Status**: early preview. **macOS + Chrome** is the primary supported runtime. **Windows + Chrome** is experimental — Native Messaging host registration, backend startup, and `save_to_local` are implemented but still need real Windows validation. Linux is not yet supported.
 
 ![Hermes sidepanel](docs/sidepanel.png)
 
@@ -66,7 +66,7 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 
 1. Go to [Releases](https://github.com/huaqing0/Hermes--in--chrome/releases) → download `hermes-in-chrome.zip`
 2. Unzip → open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick the unzipped `hermes-in-chrome/` folder
-3. Press `Cmd+H` to open the sidepanel → follow the status bar prompts
+3. Press `Cmd+H` on macOS / `Ctrl+H` on Windows to open the sidepanel → follow the status bar prompts
 
 ### Dev install (for contributors)
 
@@ -80,7 +80,7 @@ Service Worker  ←→ WebSocket  ←→ Hermes Agent (Python)
 
 2. **Load the extension in Chrome**: open `chrome://extensions` → toggle **Developer mode** → click **Load unpacked** → pick the `dist/` directory generated above.
 
-3. **Press `Cmd+H`** to open the sidepanel — then **follow the prompts in the status bar at the top**. You don't need to copy your extension ID by hand or hunt for command names in the README.
+3. **Press `Cmd+H` on macOS / `Ctrl+H` on Windows** to open the sidepanel — then **follow the prompts in the status bar at the top**. You don't need to copy your extension ID by hand or hunt for command names in the README.
 
 The status bar walks you through:
 
@@ -160,7 +160,7 @@ Core browser tools:
 
 ## Save scraped content locally (Native Messaging)
 
-`save_to_local` lets the agent persist `fetch_url` HTML, `read_page` a11y trees, `screenshot` PNGs, `extract_markdown` output, etc. The path can be **anywhere on your filesystem** (`~/Downloads/`, `/Volumes/external-ssd/`, `/tmp/`, etc.) — **no configuration required**. Chrome extensions can't write files directly, so this goes through Native Messaging to a small local Python process `hermes-filewriter.py`.
+`save_to_local` lets the agent persist `fetch_url` HTML, `read_page` a11y trees, `screenshot` PNGs, `extract_markdown` output, etc. The path can be **anywhere on your filesystem** (`~/Downloads/`, `C:\Users\you\Downloads\`, `/Volumes/external-ssd/`, `/tmp/`, etc.) — **no configuration required**. Chrome extensions can't write files directly, so this goes through Native Messaging to a small local Python process `hermes-filewriter.py`.
 
 **First-time install (one-shot)**: easiest path is to follow the prompt in the sidepanel's onboarding status bar — it auto-fills your extension ID and the project path. If you'd rather do it by hand:
 
@@ -173,18 +173,19 @@ Core browser tools:
 
 What this does:
 
-- Copies `scripts/hermes-filewriter.py` to `~/.hermes/native-messaging/`
-- Writes a host manifest to `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.hermes.filewriter.json` with your extension ID in `allowed_origins`
-- Records the repo root to `~/.hermes/hermes-in-chrome.json` so the sidepanel can emit fully-resolved `cd … && npm run …` one-liners
+- Copies `scripts/hermes-filewriter.py` to the per-user Hermes native-messaging directory (`~/.hermes/native-messaging/` on macOS, `%USERPROFILE%\.hermes\native-messaging\` on Windows)
+- macOS: writes a host manifest to `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.hermes.filewriter.json` with your extension ID in `allowed_origins`
+- Windows experimental: writes the manifest to `%USERPROFILE%\.hermes\native-messaging\com.hermes.filewriter.json` and registers `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.hermes.filewriter`
+- Records the repo root to `~/.hermes/hermes-in-chrome.json` on macOS or `%USERPROFILE%\.hermes\hermes-in-chrome.json` on Windows so the sidepanel can emit fully-resolved `cd ...` / PowerShell `Set-Location ...` one-liners
 - Reload the extension on `chrome://extensions` afterwards
 
 **Security boundary**:
 
-- Host accepts absolute paths and expands `~`. Writes are allowed anywhere on the user filesystem **except** system paths (`/System`, `/usr`, `/etc`, `/Library/Apple`, etc.) and sensitive user dirs (`~/.ssh`, `~/.aws`, `~/.gnupg`, browser profiles, `~/.zshrc` and other shell rc files). This blocks prompt-injection attempts to steal credentials or hijack a shell.
+- Host accepts absolute paths and expands `~`. Writes are allowed anywhere on the user filesystem **except** system paths (`/System`, `/usr`, `/etc`, `/Library/Apple`, `C:\Windows`, `C:\Program Files`, etc.) and sensitive user dirs (`~/.ssh`, `~/.aws`, `~/.gnupg`, browser profiles, shell rc files, PowerShell profile files, etc.). This blocks prompt-injection attempts to steal credentials or hijack a shell.
 - Refuses to overwrite existing files unless the tool call explicitly passes `overwrite=true`
 - Native Messaging request envelope is capped at 64 MiB; base64 binary payloads must account for encoding overhead when computing total size.
 - Host responses stay tiny and below Chrome's 1 MiB native-host-to-extension limit.
-- Log at `~/.hermes/logs/hermes-filewriter.log`
+- Log at `~/.hermes/logs/hermes-filewriter.log` on macOS or `%USERPROFILE%\.hermes\logs\hermes-filewriter.log` on Windows
 
 **Typical use**:
 
@@ -230,7 +231,7 @@ What we do **not** do:
 
 **This is a Chrome extension frontend**; it needs a backend:
 
-- Full runtime support is currently **macOS only**. The MV3 extension UI is browser-based, but the Native Messaging host installer and local filewriter flow target Chrome on macOS.
+- **macOS + Chrome** is the primary supported runtime. **Windows + Chrome** is experimental; Native Messaging host registration, local filewriter support, and backend startup are implemented but still require real Windows validation. Linux is not supported yet.
 - **Backend**: [Hermes Agent](https://github.com/huaqing0/hermes-agent) (third-party project, maintained separately), listening on `127.0.0.1:8642`, exposing `/api/ws/extension`
 - The 5 provider handlers (`provider_status` / `provider_validate` / `provider_auth_start` / `provider_auth_poll` / `provider_logout`) and the browser tool bridge need to be registered inside Hermes Agent
 - The extension itself **cannot** spawn local Python processes; run `npm run backend:ensure` from your terminal, or `npm run backend:watch` for a foreground watchdog

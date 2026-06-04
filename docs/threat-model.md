@@ -48,4 +48,4 @@ Hermes in Chrome is a local-first browser automation extension. It can still tou
 
 - Hermes in Chrome does not sandbox the selected LLM provider. Provider data handling follows that provider's terms and data policy.
 - The extension does not attempt to bypass website anti-automation systems.
-- The macOS Native Messaging host is the only supported local filewriter host in this release.
+- The macOS Native Messaging host is the primary supported local filewriter host. Windows host registration/filewriter support is experimental and must be validated on real Windows + Chrome before treating it as stable. Linux is not supported in this release.
