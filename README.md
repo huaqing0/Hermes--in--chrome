@@ -25,6 +25,13 @@ Use Hermes for tasks that are awkward for a normal chat agent because they depen
 
 The agent can read the current page, open its own tab group, inspect dynamic interfaces, take real screenshots via Chrome DevTools Protocol, and type/click like a real user — all while you keep working in your own tabs.
 
+## Why Hermes
+
+- **Stay on the page** — ask the AI while you are watching a video, reading a paper, or looking at a creator dashboard. You do not need to switch to a separate AI chat window, paste links, upload screenshots, and explain the page context again.
+- **Works with non-vision models** — Hermes exposes the page through accessibility trees, browser state, tool results, and optional screenshot analysis, so text-only models such as DeepSeek can still understand and operate webpages.
+- **A lightweight local alternative** — inspired by workflows like Claude in Chrome, but built as an independent local-first project. When Claude / Codex quota is tight, or a task feels too small for a premium coding/browser agent, you can run Hermes with cheaper tokens such as DeepSeek or any OpenAI-compatible provider.
+- **Bring your own Hermes Agent** — this repository is the Chrome extension frontend. You still need [Hermes Agent](https://github.com/huaqing0/hermes-agent) installed and running locally.
+
 ## What you need
 
 | Requirement | Where to get it |

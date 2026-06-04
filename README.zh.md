@@ -25,6 +25,13 @@ Hermes 适合做普通聊天 Agent 很难做好的网页现场任务：它依赖
 
 Agent 能读当前页面，自己开一组 Tab，理解动态网页，用 Chrome DevTools 真截图、真点击、真打字——你在自己的 Tab 里照常工作，互不干扰。
 
+## 为什么用 Hermes
+
+- **不用离开当前网页问 AI** —— 看视频、读论文、刷帖子、看创作者后台时，可以直接在侧边栏提问或下指令，不用切到单独的 AI 对话框、复制链接、上传截图、重新解释上下文。
+- **让无视觉模型也能操控网页** —— Hermes 会把页面转换成无障碍树、浏览器状态和工具结果，必要时再走截图分析，所以 DeepSeek 这类文本模型也能理解并操作网页。
+- **更轻量的本地替代选择** —— 参考了 Claude in Chrome 这类工作流，但这是独立的 local-first 项目。Claude / Codex 额度紧张时，或者某些网页任务不值得动用重型 Agent 时，可以用 Hermes 搭配 DeepSeek 等更便宜的 token，或任何 OpenAI-compatible provider。
+- **需要自备 Hermes Agent** —— 这个仓库是 Chrome 扩展前端；你仍然需要先安装并运行本地 [Hermes Agent](https://github.com/huaqing0/hermes-agent)。
+
 ## 你需要准备
 
 | 条件 | 去哪获取 |
