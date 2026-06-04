@@ -56,7 +56,7 @@ export class HermesWS {
       console.log('[Hermes WS] 已连接');
       this.connected = true;
       this.retry = 0;
-      this.send({ type: 'hello', client: 'chrome-extension', version: '0.1.0' });
+      this.send({ type: 'hello', client: 'chrome-extension', version: '0.1.1' });
       this.startPing();
     };
 
