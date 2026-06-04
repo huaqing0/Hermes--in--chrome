@@ -657,7 +657,7 @@ TOOLS: list[tuple[str, str, dict]] = [
         {
             "name": "ext_javascript_tool",
             "description": (
-                "在当前页面执行一段安全的 JavaScript。Auto 模式下无感执行（不弹审批），"
+                "在当前页面执行一段受限 JavaScript。此工具需要显式审批，"
                 "但受到严格安全限制：禁止读取 cookies/localStorage/sessionStorage/indexedDB/剪贴板，"
                 "禁止发网络请求，禁止 window.open，禁止 eval/Function/import。"
                 "适合读取 DOM 状态、表单结构、按钮文本、页面变量的非敏感摘要。"
@@ -683,8 +683,9 @@ TOOLS: list[tuple[str, str, dict]] = [
             "name": "ext_file_upload",
             "description": (
                 "把本地文件设置到网页 <input type=file> 上。"
+                "需要显式审批，且必须提供 ref_id 或 selector，不能盲选第一个上传框。"
                 "路径必须是绝对路径或以 ~ 开头的路径。"
-                "拒绝 .ssh/.aws/.gnupg 等敏感目录。"
+                "拒绝 .ssh/.aws/.gnupg、浏览器 profile、Keychains、shell rc 和常见凭据文件。"
             ),
             "parameters": {
                 "type": "object",

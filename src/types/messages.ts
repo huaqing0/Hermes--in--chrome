@@ -36,7 +36,7 @@ export type ToolName =
 export type ExecMode = 'auto' | 'approval' | 'plan';
 
 export type ToolPermission = 'read' | 'action' | 'navigate' | 'upload'
-  | 'download' | 'file_write' | 'clipboard' | 'javascript' | 'window' | 'debug';
+  | 'download' | 'file_write' | 'clipboard' | 'javascript' | 'window' | 'debug' | 'compound';
 
 export interface CredentialOverride {
   apiKey?: string;

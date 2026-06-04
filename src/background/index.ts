@@ -46,7 +46,7 @@ export const TOOL_PERMISSIONS: Record<ToolName, ToolPermission[]> = {
   close_tab: ['navigate'],
 
   save_to_local: ['file_write'],
-  browser_batch: ['action'],
+  browser_batch: ['action','compound'],
 
   javascript_tool: ['javascript'],
   file_upload: ['upload'],
@@ -58,16 +58,23 @@ function toolApprovalKey(sessionId: string, callId: string): string {
   return `${sessionId}:${callId}`;
 }
 
+const ALWAYS_APPROVAL_PERMISSIONS = new Set<ToolPermission>(['javascript', 'upload']);
+
 function toolBlockedByMode(mode: ExecMode | undefined, sessionId: string, callId: string, tool: ToolName, _args: Record<string, unknown>): string | null {
   const perms = TOOL_PERMISSIONS[tool] ?? [];
   const readOnly = perms.every((p) => p === 'read');
+  const approvalKey = toolApprovalKey(sessionId, callId);
+
+  if (perms.some((p) => ALWAYS_APPROVAL_PERMISSIONS.has(p))) {
+    if (approvedToolCalls.has(approvalKey)) { approvedToolCalls.delete(approvalKey); return null; }
+    return `${tool} requires explicit approval before execution.`;
+  }
 
   if (mode === 'plan') {
     if (!readOnly) return `Plan mode blocks ${tool}.`;
   }
   if (mode === 'approval') {
     if (readOnly) return null;
-    const approvalKey = toolApprovalKey(sessionId, callId);
     if (approvedToolCalls.has(approvalKey)) { approvedToolCalls.delete(approvalKey); return null; }
     return `Approval mode requires explicit approval before ${tool}.`;
   }

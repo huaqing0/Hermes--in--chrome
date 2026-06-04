@@ -2640,6 +2640,24 @@ const JS_DENYLIST = [
   'chrome.', 'fetch(', 'XMLHttpRequest', 'navigator.sendBeacon',
   'navigator.clipboard', 'eval(', 'Function(', 'import(',
   'WebSocket', 'EventSource', 'postMessage(', 'window.open(',
+  'constructor', '__proto__', 'prototype', 'atob(', 'btoa(',
+];
+const JS_NORMALIZED_DENYLIST = [
+  'documentcookie',
+  'localstorage',
+  'sessionstorage',
+  'indexeddb',
+  'navigatorclipboard',
+  'xmlhttprequest',
+  'sendbeacon',
+  'websocket',
+  'eventsource',
+  'postmessage',
+  'windowopen',
+  'globalthisfetch',
+  'globalthisfunction',
+  'constructor',
+  'fromcharcode',
 ];
 
 function validateSafeJavascript(code: string): void {
@@ -2654,6 +2672,16 @@ function validateSafeJavascript(code: string): void {
   const lower = code.toLowerCase();
   for (const kw of JS_DENYLIST) {
     if (lower.includes(kw.toLowerCase())) throw new Error(`Forbidden: ${kw}`);
+  }
+  if (/[\w)\]]\s*=/.test(code) || /\b(delete|new|class|async|await)\b/i.test(code)) {
+    throw new Error('javascript_tool only allows read-only expressions');
+  }
+  if (/\[\s*["'`]/.test(code)) {
+    throw new Error('Bracket string property access is forbidden');
+  }
+  const normalized = lower.replace(/[^a-z0-9]/g, '');
+  for (const kw of JS_NORMALIZED_DENYLIST) {
+    if (normalized.includes(kw)) throw new Error(`Forbidden: ${kw}`);
   }
 }
 
@@ -2706,6 +2734,21 @@ async function browserBatch(sessionId: string, args: { actions?: BatchAction[] }
   const actions = args.actions || [];
   if (!Array.isArray(actions) || actions.length === 0) return { error: 'actions argument is required' };
   if (actions.length > 20) return { error: 'browser_batch supports at most 20 actions per call' };
+  const allowedTools = new Set<ToolName>([
+    'read_page',
+    'inspect_targets',
+    'find',
+    'click',
+    'hover',
+    'right_click',
+    'double_click',
+    'drag',
+    'type',
+    'key',
+    'scroll',
+    'scroll_to',
+    'wait',
+  ]);
   const results = [];
   for (let i = 0; i < actions.length; i++) {
     const action = actions[i];
@@ -2717,6 +2760,15 @@ async function browserBatch(sessionId: string, args: { actions?: BatchAction[] }
     }
     if (tool === 'browser_batch') {
       results.push({ index: i, tool, ok: false, error: 'browser_batch cannot call itself recursively' });
+      break;
+    }
+    if (!allowedTools.has(tool)) {
+      results.push({
+        index: i,
+        tool,
+        ok: false,
+        error: `browser_batch cannot run ${tool}. Call that tool separately so the permission model can evaluate it.`,
+      });
       break;
     }
     try {
@@ -2786,15 +2838,60 @@ async function resizeWindow(_sessionId: string, args: { width?: number; height?:
 
 // ── file_upload / upload_image ────────────────────────────
 
-const SENSITIVE_DIRS = ['.ssh', '.aws', '.gnupg', '.zshrc', '.bashrc', '.bash_profile', '.profile'];
+const UPLOAD_DENY_PREFIXES = [
+  '/System',
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/etc',
+  '/var/db',
+  '/Library/Apple',
+  '/private/etc',
+  '/private/var/db',
+];
+const UPLOAD_SENSITIVE_PATTERNS = [
+  /\/\.ssh(\/|$)/,
+  /\/\.aws(\/|$)/,
+  /\/\.gnupg(\/|$)/,
+  /\/\.docker(\/|$)/,
+  /\/\.kube(\/|$)/,
+  /\/\.config\/gcloud(\/|$)/,
+  /\/\.hermes(\/|$)/,
+  /\/\.codex(\/|$)/,
+  /\/Library\/Keychains(\/|$)/,
+  /\/Library\/Application Support\/(Google\/Chrome|Chromium|Firefox)(\/|$)/,
+  /\/Library\/Cookies(\/|$)/,
+  /\/Library\/Safari(\/|$)/,
+  /\/(Login Data|Cookies|Local State|Preferences)$/,
+  /\/\.(netrc|npmrc|pypirc|git-credentials|gitconfig|env)$/,
+  /\/\.(bashrc|bash_profile|zshrc|zprofile|zshenv|profile)$/,
+  /\/id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/,
+];
+
+function normalizeUploadPath(raw: string): string {
+  const expanded = raw.startsWith('~') ? `/Users/__home_placeholder${raw.slice(1)}` : raw;
+  const parts: string[] = [];
+  for (const part of expanded.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') parts.pop();
+    else parts.push(part);
+  }
+  return '/' + parts.join('/');
+}
 
 function validateUploadPath(p: string): void {
   // Accept only absolute or ~ paths
   if (!p.startsWith('/') && !p.startsWith('~')) throw new Error(`Path must be absolute: ${p}`);
-  const normalized = p.startsWith('~') ? '/Users/__home_placeholder' + p.slice(1) : p;
-  for (const dir of SENSITIVE_DIRS) {
-    if (normalized.includes(`/${dir}`) || normalized.endsWith(`/${dir}`)) {
-      throw new Error(`Path in sensitive directory: ${dir}`);
+  const normalized = normalizeUploadPath(p);
+  if (normalized === '/') throw new Error('Refusing to upload root path');
+  for (const prefix of UPLOAD_DENY_PREFIXES) {
+    if (normalized === prefix || normalized.startsWith(prefix + '/')) {
+      throw new Error(`Path in protected system location: ${prefix}`);
+    }
+  }
+  for (const pattern of UPLOAD_SENSITIVE_PATTERNS) {
+    if (pattern.test(normalized)) {
+      throw new Error(`Path appears sensitive and cannot be uploaded: ${p}`);
     }
   }
 }
@@ -2806,6 +2903,7 @@ async function fileUpload(_sessionId: string, args: {
 }) {
   const paths = args.paths || [];
   if (!paths.length) return { error: 'paths is required' };
+  if (!args.ref_id && !args.selector) return { error: 'file_upload requires ref_id or selector' };
   for (const p of paths) {
     try { validateUploadPath(p); }
     catch (e) { return { error: (e as Error).message }; }
@@ -2877,10 +2975,8 @@ async function fileUpload(_sessionId: string, args: {
 
     if (args.submit) {
       try {
-        // Escape selector for safe interpolation into JS string
-        const safeSelector = (args.selector || 'input[type="file"]').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
-          expression: `document.querySelector('${safeSelector}')?.closest('form')?.requestSubmit()`,
+          expression: `document.querySelector(${JSON.stringify(args.selector || 'input[type="file"]')})?.closest('form')?.requestSubmit()`,
         }).catch(() => {});
         result.submit_attempted = true;
       } catch { result.submit_attempted = false; }

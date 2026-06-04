@@ -27,6 +27,7 @@ design/
 
 # Internal review docs
 docs/open-source-readiness-*.md
+.understand-anything/
 
 # OS
 Thumbs.db
