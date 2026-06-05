@@ -21,3 +21,18 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=moderate
+
+  test-python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Run filewriter safety tests
+        run: python -m pytest tests/test_filewriter_safety.py -v
