@@ -5,8 +5,8 @@ Thanks for the interest! This is a small project — contributions and issues ar
 ## Quick start
 
 ```bash
-git clone https://github.com/huaqing0/hermes-in-chrome.git
-cd hermes-in-chrome
+git clone https://github.com/huaqing0/Hermes--in--chrome.git
+cd Hermes--in--chrome
 npm install
 npm run dev    # vite dev with hot reload
 # or
