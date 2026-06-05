@@ -1,0 +1,75 @@
+name: Bug Report
+description: Something is broken or behaving unexpectedly
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong? A clear, one-sentence summary.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered, minimal steps that reliably trigger the issue.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: input
+    id: chrome-version
+    attributes:
+      label: Chrome version
+      description: Paste from `chrome://version`
+      placeholder: "e.g. 132.0.6834.160"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: macOS version or Windows version
+      placeholder: "e.g. macOS 15.4, Windows 11 24H2"
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: Hermes in Chrome version
+      description: From `package.json` or `chrome://extensions`
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: Hermes Agent version
+      description: Version or commit of the Hermes Agent running locally
+  - type: textarea
+    id: backend-status
+    attributes:
+      label: Backend status output
+      description: Run `npm run backend:status` and paste the output
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: |
+        Useful sources:
+        - Sidepanel devtools console (right-click sidepanel → Inspect)
+        - Service worker logs (`chrome://extensions` → "Inspect views: service worker")
+        - `~/.hermes/logs/hermes-in-chrome-gateway.log`
+        - `~/.hermes/logs/hermes-filewriter.log`
+        - Screenshots or screen recordings for UI issues
+      render: shell

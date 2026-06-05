@@ -1,24 +1,26 @@
-## What does this change?
+## Summary
 
-<!-- One sentence about the user-facing effect. -->
+<!-- What does this PR do? One or two sentences. -->
 
-## Why?
+## Changes
 
-<!-- Motivation: bug it fixes, feature it adds, refactor rationale, etc. -->
+<!-- List specific changes — files touched, logic modified, new features, etc. -->
 
-## How to test
+## Testing
+
+<!-- How did you verify this works? -->
+
+## Risk
+
+<!-- Could this break anything? Does it touch permissions, build config, or core paths? -->
+
+## Notes
+
+<!-- Anything else reviewers should know. -->
+
+## Checklist
 
 - [ ] `npm run typecheck` passes
 - [ ] `npm run build` passes
-- [ ] Manually verified in Chrome with `dist/` reloaded
-- [ ] (if UI) Checked both CP2077 and Synthwave themes
-- [ ] (if UI) Checked both EN and 中 language
-- [ ] (if filewriter / native host) Re-ran `npm run native-host:install -- <id>` and confirmed `ext_save_to_local` works
-
-## Screenshots / GIFs
-
-<!-- For any UI change. -->
-
-## Anything reviewers should be careful about?
-
-<!-- New permissions, breaking changes, things you're not sure about. -->
+- [ ] `npm audit --omit=dev --audit-level=moderate` reports no moderate or higher vulnerabilities
+- [ ] Tested in Chrome if UI or browser behavior changed
