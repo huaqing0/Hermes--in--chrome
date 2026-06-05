@@ -10,6 +10,8 @@
 > [← English version](./README.md)
 
 > **当前状态**：早期预览版。**macOS + Chrome** 是主支持运行环境；**Windows + Chrome** 为 experimental —— Native Messaging host 注册、backend 启动和 `save_to_local` 已实现，但还需要真实 Windows 验证。Linux 暂不支持。
+>
+> **信任说明**：Hermes 是一个功能强大的浏览器自动化扩展。它申请的 `debugger`、`scripting`、`tabs`、`clipboardRead`、`clipboardWrite`、`nativeMessaging` 和 `<all_urls>` 等权限，是因为它需要读取和操作你明确要求处理的页面。建议在只读调研时使用**计划模式**，在登录网站、后台、支付页面、管理页面或任何有破坏性操作的页面使用**审批模式**。
 
 ![Hermes in Chrome 演示](docs/hermes-demo.gif)
 
