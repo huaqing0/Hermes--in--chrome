@@ -16,9 +16,9 @@ A simple shared token can validate that both the extension and the gateway are u
 
 ### Setup flow
 
-1. On first `npm run backend:ensure`, the backend setup script generates a random token and writes it to `~/.hermes/.gateway-token`
+1. On first `npm run backend:ensure`, the backend setup script generates a random token and writes it to `~/.hermes/.gateway-token` (permissions `0600`)
 2. The token is passed to the gateway as an environment variable or CLI argument
-3. The extension is informed of the token via a side-channel with persistence
+3. The extension retrieves the token on startup via the Native Messaging host (the `ping` op already returns metadata from `~/.hermes/hermes-in-chrome.json`; the token file can be read through the same channel). The Service Worker holds the token in memory for the session lifetime and re-reads it on reconnect
 
 ### Runtime flow
 
@@ -31,9 +31,9 @@ A simple shared token can validate that both the extension and the gateway are u
 ### Design constraints
 
 - The token is never sent to any LLM provider — it stays within the WebSocket handshake
-- The token does not appear in conversation logs, `chrome.storage`, or tool results
+- The extension holds the token in memory only (not persisted in `chrome.storage`); it does not appear in conversation logs or tool results
 - Token rotation is supported: generate a new token, restart the gateway with it, and the extension picks it up on next connect
-- If the token file is missing or empty, the gateway runs in unauthenticated mode as a fallback for backward compatibility
+- Fail-closed by default: if the token file is missing or the token does not match, the gateway rejects the connection. During migration, unauthenticated mode may be allowed only behind an explicit `--legacy-no-auth` flag
 
 ### What this does NOT protect
 
