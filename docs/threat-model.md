@@ -24,6 +24,7 @@ Hermes in Chrome is a local-first browser automation extension. It can still tou
 - `debugger` and `<all_urls>` are broad permissions. They are necessary for a browser agent but increase the blast radius of a compromised extension.
 - Native file writing can be abused if path checks are too loose.
 - Screenshots and page text may contain private data before being sent to the configured model provider.
+- A local process can bind to port 8642 and impersonate the Hermes gateway, intercepting conversations, tool calls, and page content.
 
 ## Mitigations
 
@@ -35,6 +36,7 @@ Hermes in Chrome is a local-first browser automation extension. It can still tou
 - `type` snapshots the clipboard, pastes the requested text, and reports `clipboard_restore_mode` if restore had to degrade or failed.
 - `save_to_local` is unavailable until the Native Messaging host is explicitly installed for this extension ID.
 - Provider API keys are recommended to live in the Hermes backend environment, not in Chrome storage.
+- Planned: local shared-token handshake between extension and gateway to prevent local process impersonation (see [local-gateway-auth.md](./local-gateway-auth.md)).
 
 ## User Controls
 
