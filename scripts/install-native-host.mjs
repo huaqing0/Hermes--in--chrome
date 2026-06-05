@@ -318,7 +318,8 @@ async function installWindows(extIds) {
   const r = run('reg', ['add', regKey(), '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f']);
   if (!r.ok) {
     console.error(`Failed to write registry: ${r.stderr}`);
-    console.error(`Please run this command manually as Administrator:`);
+    console.error(`Please run this command manually in PowerShell.`);
+    console.error(`Administrator privileges are usually not required for HKCU, but your environment may restrict registry writes.`);
     console.error(`  ${regCmd}`);
     process.exit(1);
   }

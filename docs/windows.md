@@ -103,5 +103,5 @@ Path comparisons are case-insensitive on Windows to prevent case-based bypasses.
 ## Known gaps
 
 - Only Chrome's registry path (`HKCU\Software\Google\Chrome\NativeMessagingHosts`) is supported. Edge, Brave, and other Chromium-based browsers use different registry roots.
-- The `npm run native-host:install` script uses `reg add` which requires no elevation for `HKCU`. If this fails, verify the user has write access to their own registry hive.
+- The `npm run native-host:install` script uses `reg add` to write to `HKCU`. Administrator privileges are usually not required for HKCU registration. If registry writing fails, try running the printed `reg add` command manually in PowerShell and check whether your environment restricts user registry writes.
 - Backend detach/spawn behavior differs slightly from macOS. If the gateway process doesn't survive terminal close, use `npm run backend:watch` in a kept-open PowerShell window.
