@@ -10,6 +10,8 @@
 > [中文版 →](./README.zh.md)
 
 > **Status**: early preview. **macOS + Chrome** is the primary supported runtime. **Windows + Chrome** is experimental — Native Messaging host registration, backend startup, and `save_to_local` are implemented but still need real Windows validation. Linux is not yet supported.
+>
+> **Trust**: Hermes is a powerful browser automation extension. It requests broad Chrome permissions — `debugger`, `scripting`, `tabs`, `clipboardRead`, `clipboardWrite`, `nativeMessaging`, and `<all_urls>` — because it needs to read and operate pages you explicitly ask it to work on. Use **Plan mode** for read-only inspection and **Approval mode** for logged-in sites, dashboards, payments, admin pages, or destructive actions.
 
 ![Hermes in Chrome demo](docs/hermes-demo.gif)
 
