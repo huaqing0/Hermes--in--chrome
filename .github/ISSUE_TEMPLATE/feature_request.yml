@@ -1,0 +1,34 @@
+name: Feature Request
+description: Suggest a new capability or improve an existing flow
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is the problem?
+      description: Describe the current workflow or friction you hit. Be concrete.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What change would resolve the problem? Include UI/UX details if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you considered and why they would be worse.
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Related workflow
+      description: What kind of task were you trying to do when you hit this? (e.g. reading a page, automating a form, extracting data)
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: macOS, Windows, or both
+      placeholder: "e.g. macOS + Windows"
