@@ -34,6 +34,7 @@ You'll also need the **Hermes Agent** backend running on `127.0.0.1:8642`. See t
 - Include a one-line summary in the PR title (e.g. `feat: add minimax oauth flow`, `fix: composer placeholder regression`)
 - Test in both `dystopia` and `synthwave` themes if your change touches UI
 - Run `npm run build` and `npm run typecheck` before pushing
+- For release steps, see the [Release Checklist](./docs/release-checklist.md)
 
 ## Filing issues
 
