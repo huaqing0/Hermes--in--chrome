@@ -100,7 +100,7 @@ This is expected behavior. Hermes in Chrome uses `chrome.debugger` (Chrome DevTo
 
 - The banner disappears when the agent finishes its current task
 - You can click the banner to stop the debugger at any time
-- No data leaves your machine through CDP
+- CDP itself is local, but page content or screenshots may be relayed by the backend to your configured model provider
 
 ## read_page fails or returns empty content
 
@@ -142,5 +142,5 @@ cat ~/.hermes/logs/hermes-in-chrome-tools.jsonl | tail -20
 If none of the above resolves your issue:
 
 1. Run `npm run check-bridge` to verify the backend bridge is properly configured
-2. Check the [security policy](./SECURITY.md) for reporting sensitive issues
+2. Check the [security policy](../SECURITY.md) for reporting sensitive issues
 3. File a bug report with logs and reproduction steps on [GitHub Issues](https://github.com/huaqing0/Hermes--in--chrome/issues)
