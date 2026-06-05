@@ -307,6 +307,8 @@ See [docs/windows.md](./docs/windows.md) for details.
 - Hermes in Chrome is not published on the Chrome Web Store yet; install from a release zip or build from source.
 - Chrome shows a debugger-control banner while the agent is driving a page. This is expected for tools that use Chrome DevTools Protocol.
 
+For help with common issues, see the [Troubleshooting Guide](./docs/troubleshooting.md).
+
 ## Project layout
 
 ```
