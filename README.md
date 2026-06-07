@@ -5,7 +5,7 @@
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20experimental-lightgrey.svg)](./docs/windows.md)
 
-> An AI agent that lives in your Chrome sidebar and works on the live web in front of you: summarize videos, explain articles / papers / posts, inspect creator dashboards, open specific content, and operate forms or accounts after your approval.
+> An AI agent that lives in your Chrome sidebar and turns the live browser into an agent workspace: page text, images, video content, dynamic UI state, and logged-in dashboards become context the model can read and act on.
 >
 > [中文版 →](./README.zh.md)
 
@@ -19,15 +19,14 @@ Demo video and launch post: [x.com/xiaodingdang664/status/2062585330893746256](h
 
 ## What it does
 
-Use Hermes for tasks that are awkward for a normal chat agent because they depend on the page, video, account, or dashboard already open in your browser:
+Hermes is not a single-purpose summarizer or scraper. It gives the model access to the live browser context that a separate chat window usually cannot see:
 
-- **Summarize the current video**: "Summarize this YouTube / Bilibili video, list the key moments, and give me timestamps."
-- **Explain the page in context**: "Explain this article / paper / forum post. What is the main claim, what evidence does it use, and what should I pay attention to?"
-- **Analyze creator analytics**: "Open my creator studio and analyze why this video performed this way from views, retention, traffic sources, and comments."
-- **Find and open content**: "Open that interview clip where the guest talks about browser agents" or "jump this video to 40:50."
-- **Operate logged-in sites**: "Draft a tweet from this thread and publish it after I approve" or "fill this form from the data on the current page."
+- **Read multimodal web context** — page structure, article text, images, video frames / captions, screenshots, and visual UI state can all become input to the agent.
+- **Understand the current session** — Hermes works with the tabs, logged-in pages, dashboards, and account-specific state already open in your Chrome.
+- **Act where the context lives** — after understanding the page, it can navigate, open tabs, click, type, extract, save, and continue the workflow in the same browser.
+- **Make cheaper or text-only models useful** — accessibility trees, tool feedback, and optional vision routing let models such as DeepSeek operate webpages beyond plain copied text.
 
-The agent can read the current page, open its own tab group, inspect dynamic interfaces, take real screenshots via Chrome DevTools Protocol, and type/click like a real user — all while you keep working in your own tabs.
+The goal is to move AI from a detached chat box into the browser workspace, where the agent can perceive the web page and carry actions forward on your behalf.
 
 ## Why Hermes
 
