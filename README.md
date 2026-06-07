@@ -5,7 +5,7 @@
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20experimental-lightgrey.svg)](./docs/windows.md)
 
-> An AI agent that lives in your Chrome sidebar and turns the live browser into an agent workspace: page text, images, video content, dynamic UI state, and logged-in dashboards become context the model can read and act on.
+> A Chrome sidebar extension that gives Hermes Agent a real browser workspace: page text, images, video frames, dynamic UI state, logged-in dashboards, tab groups, and conversation history become context Hermes can inspect and operate.
 >
 > [中文版 →](./README.zh.md)
 
@@ -19,20 +19,26 @@ Demo video and launch post: [x.com/xiaodingdang664/status/2062585330893746256](h
 
 ## What it does
 
-Hermes is not a single-purpose summarizer or scraper. It gives the model access to the live browser context that a separate chat window usually cannot see:
+Hermes in Chrome is not a single-purpose summarizer or web scraper. It gives Hermes Agent a real Chrome workspace, so browser tasks can be understood and carried forward inside the same place where the context already exists.
 
-- **Read multimodal web context** — page structure, article text, images, video frames / captions, screenshots, and visual UI state can all become input to the agent.
-- **Understand the current session** — Hermes works with the tabs, logged-in pages, dashboards, and account-specific state already open in your Chrome.
-- **Act where the context lives** — after understanding the page, it can navigate, open tabs, click, type, extract, save, and continue the workflow in the same browser.
-- **Make cheaper or text-only models useful** — accessibility trees, tool feedback, and optional vision routing let models such as DeepSeek operate webpages beyond plain copied text.
+- **Understand real Chrome pages** — read the current tab's page structure, body text, links, buttons, input fields, title, URL, viewport state, and interactive targets.
+- **Understand visual web content** — use screenshots and visual inspection so images, video frames / captions, player state, canvas content, icon-only controls, and visual UI state can become part of Hermes' observation.
+- **Automate browser control** — navigate, open tabs, close tabs, click, type, scroll, drag, use keyboard shortcuts, fill forms, submit content, publish posts, download information, and save results.
+- **Manage multiple tab groups** — each Hermes session can own an isolated Chrome Tab Group. Agent-opened pages stay with the right task, and multiple browser tasks can exist side by side without mixing into your normal tabs.
+- **Keep task history** — conversations are stored by session / tab group, can be reopened from the sidepanel history, and can be exported as Markdown. This is Hermes task history, not Chrome browsing history.
+- **Work on logged-in web apps** — operate on pages a detached AI chat cannot see: creator studios, dashboards, admin panels, GitHub, YouTube Studio, X, SaaS tools, and account-specific states already open in your Chrome.
+- **Let non-vision models control webpages** — models such as DeepSeek can still operate real pages through accessibility trees, target discovery, screenshot analysis, and tool feedback.
+- **Extract and save web information** — turn the current page into Markdown, capture screenshots, save text or binary outputs to local files, and keep research artifacts outside the browser.
+- **Handle complex inputs and uploads** — support rich-text editors, file upload fields, image uploads, keyboard-submit flows, and clipboard snapshot / restore for sites such as X and YouTube.
+- **Inspect complex web apps** — read console logs, network requests, screenshots, selected read-only JavaScript results, page targets, and window state when a dynamic page needs deeper diagnosis.
 
-The goal is to move AI from a detached chat box into the browser workspace, where the agent can perceive the web page and carry actions forward on your behalf.
+The goal is to move Hermes from a detached chat box into the browser workspace, where it can perceive the current web scene and continue the task with your approval boundaries.
 
 ## Why Hermes
 
-- **Stay on the page** — ask the AI while you are watching a video, reading a paper, or looking at a creator dashboard. You do not need to switch to a separate AI chat window, paste links, upload screenshots, and explain the page context again.
+- **Stay on the page** — ask Hermes while you are watching a video, reading a paper, or looking at a creator dashboard. You do not need to switch to a separate AI chat window, paste links, upload screenshots, and explain the page context again.
 - **Works with non-vision models** — Hermes exposes the page through accessibility trees, browser state, tool results, and optional screenshot analysis, so text-only models such as DeepSeek can still understand and operate webpages.
-- **A lightweight local alternative** — inspired by workflows like Claude in Chrome, but built as an independent local-first project. When Claude / Codex quota is tight, or a task feels too small for a premium coding/browser agent, you can run Hermes with cheaper tokens such as DeepSeek or any OpenAI-compatible provider.
+- **Inspired by Claude in Chrome, built local-first** — the browser workflow is familiar, but this project is independent, provider-flexible, and designed to run against your local Hermes Agent.
 - **Bring your own Hermes Agent** — this repository is the Chrome extension frontend. You still need [Hermes Agent](https://github.com/huaqing0/hermes-agent) installed and running locally.
 
 ## What you need
@@ -44,15 +50,16 @@ The goal is to move AI from a detached chat box into the browser workspace, wher
 | **macOS or Windows** | macOS: full support. Windows: experimental (see below) |
 | **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
 
-No cloud account required — everything runs on your machine. Your API key talks directly to your chosen LLM provider.
+No Hermes cloud account required — the extension and gateway run on your machine. Your API key talks directly to your chosen LLM provider.
 
 > **License**: [MIT](./LICENSE).
 
-## Three core capabilities
+## Core workflow
 
-1. **Lives in the page** — a persistent Chrome sidepanel with streaming AI replies
-2. **Sees the page in real time** — after each action the agent proactively `read_page`s the accessibility tree
-3. **Opens its own tabs** — researches in series/parallel inside a dedicated Hermes Tab Group without disturbing you
+1. **Observe the browser scene** — Hermes reads the active tab, visual state, interactive targets, and related tabs before deciding what to do.
+2. **Operate the browser** — Hermes uses real Chrome actions through DevTools Protocol, content scripts, tab APIs, and Native Messaging.
+3. **Isolate each task** — Hermes keeps each session in its own Chrome Tab Group, so parallel tasks remain visually and logically separate.
+4. **Preserve the work** — sidepanel history, Markdown export, page extraction, screenshots, and local file saves make browser work reusable after the tab is closed.
 
 ## Architecture
 
@@ -160,16 +167,19 @@ Works with Ollama, vLLM, LM Studio, any private OpenAI-compatible gateway: pick 
 
 Core browser tools:
 
-`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `hover` · `right_click` · `double_click` · `drag` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `close_tab` · `screenshot` · `visual_inspect` · `wait` · `browser_batch` · `get_console_logs` · `read_network_requests` · `save_to_local` · `extract_markdown`
+`fetch_url` · `tabs_context` · `read_page` · `inspect_targets` · `find` · `click` · `hover` · `right_click` · `double_click` · `drag` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `close_tab` · `screenshot` · `visual_inspect` · `wait` · `browser_batch` · `get_console_logs` · `read_network_requests` · `save_to_local` · `extract_markdown` · `javascript_tool` · `file_upload` · `upload_image` · `shortcuts_list` · `shortcuts_execute` · `resize_window`
 
 - `read_page` and `ref_id` operations run via `chrome.scripting.executeScript`'s **isolated world** so the a11y tree is never exposed to the page's main world
 - `browser_batch` collapses predictable consecutive actions to cut tool-call round-trips
 - `key` supports combos like `Meta+Enter` for keyboard-submit on X / Twitter
 - `type` uses the clipboard temporarily for rich-text fields on X / YouTube etc., and restores the clipboard afterwards. If restore has to downgrade to plain text or fails, the result includes `clipboard_restore_mode`
 - `visual_inspect` routes a page screenshot through a real vision channel: vision-capable GPT / Claude / Gemini models receive the image natively; text-only models use Hermes `auxiliary.vision` and receive a short text analysis.
-- `save_to_local` writes any text/binary content anywhere the user has filesystem permission (except system paths and sensitive user dirs — see [Save scraped content locally](#save-scraped-content-locally-native-messaging) below); needs a one-time install. `extract_markdown` turns the current Chrome page into Markdown — typical pair with `save_to_local` for "scrape page + persist".
+- `inspect_targets` finds visible buttons, inputs, icon-only controls, rich editors, and Shadow DOM targets that a plain text read may miss
+- `file_upload` / `upload_image` attach local files or images to web forms when the user explicitly asks for it
+- `shortcuts_list` / `shortcuts_execute` expose common keyboard workflows; `resize_window` adjusts the browser window for visual tasks
+- `save_to_local` writes text or binary content anywhere the user has filesystem permission (except system paths and sensitive user dirs — see [Save browser output locally](#save-browser-output-locally-native-messaging) below); needs a one-time install. `extract_markdown` turns the current Chrome page into Markdown — typical pair with `save_to_local` for "extract page + persist".
 
-## Save scraped content locally (Native Messaging)
+## Save browser output locally (Native Messaging)
 
 `save_to_local` lets the agent persist `fetch_url` HTML, `read_page` a11y trees, `screenshot` PNGs, `extract_markdown` output, etc. The path can be **anywhere on your filesystem** (`~/Downloads/`, `C:\Users\you\Downloads\`, `/Volumes/external-ssd/`, `/tmp/`, etc.) — **no configuration required**. Chrome extensions can't write files directly, so this goes through Native Messaging to a small local Python process `hermes-filewriter.py`.
 

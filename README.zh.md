@@ -5,7 +5,7 @@
 [![Chrome MV3](https://img.shields.io/badge/chrome-MV3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20experimental-lightgrey.svg)](./docs/windows.md)
 
-> 一个住在 Chrome 侧边栏里的网页 Agent —— 它把真实浏览器变成 AI 工作区：网页文字、图片、视频画面、动态界面状态和登录后台数据，都可以成为模型理解和行动的上下文。
+> 一个让 Hermes Agent 进入真实 Chrome 浏览器的侧边栏扩展：网页文字、图片、视频画面、动态界面状态、登录后台数据、Tab 组和任务历史，都可以成为 Hermes 观察和操作的上下文。
 >
 > [← English version](./README.md)
 
@@ -19,20 +19,26 @@
 
 ## 能干什么
 
-Hermes 不是单一的总结器或网页抓取器。它让模型获得普通 AI 对话框通常看不到的浏览器现场上下文：
+Hermes in Chrome 不是单一的总结器或网页抓取器。它给 Hermes Agent 一个真实 Chrome 工作区，让网页任务可以在上下文本来所在的地方被理解、继续推进和保存。
 
-- **读取多模态网页上下文** —— 页面结构、正文、图片、视频画面 / 字幕、截图和视觉界面状态，都可以成为 Agent 的输入。
-- **理解当前浏览器会话** —— Hermes 面对的是你正在浏览的 Tab、登录后的页面、后台仪表盘和账号内实时状态，而不是一个孤立链接。
-- **在上下文所在处行动** —— 理解页面后，它可以继续导航、开 Tab、点击、输入、提取、保存，把任务在同一个浏览器里推进下去。
-- **让便宜或无视觉模型也能用** —— 通过无障碍树、工具反馈和可选视觉路由，DeepSeek 这类文本模型也能参与真实网页操作，而不只是读复制出来的文字。
+- **理解真实 Chrome 页面** —— 读取当前 Tab 的页面结构、正文、链接、按钮、输入框、标题、URL、视口状态和可交互目标。
+- **理解网页里的视觉内容** —— 通过截图和视觉检查，把图片、视频画面 / 字幕、播放器状态、Canvas、图标按钮和视觉 UI 状态纳入 Hermes 的观察范围。
+- **浏览器自动化操控** —— 自动打开网页、开新 Tab、关闭 Tab、点击、输入、滚动、拖拽、按快捷键、填写表单、提交内容、发布内容、下载或保存信息。
+- **多 Tab / 多任务组管理** —— 每个 Hermes session 可以拥有独立的 Chrome Tab Group。Agent 新开的页面会归到对应任务组里，多个浏览器任务可以并行存在，不混进你的普通标签页。
+- **查看和恢复任务历史** —— 对话记录按 session / tab group 保存，可以在侧边栏历史里重新打开，也可以导出成 Markdown。这里保存的是 Hermes 任务历史，不是 Chrome 浏览器历史。
+- **处理登录后的网页工作流** —— Hermes 在你的 Chrome 里工作，所以能处理普通 AI 对话框看不到的页面：创作者中心、数据后台、管理台、GitHub、YouTube Studio、X、SaaS 工具和账号内实时状态。
+- **让无视觉模型也能操控网页** —— DeepSeek 这类无视觉模型，也可以通过无障碍树、目标定位、截图解释和工具反馈，理解并操作真实网页。
+- **提取和保存网页信息** —— 可以把当前页面提取成 Markdown，截取页面截图，把文本或二进制结果保存到本地文件，让浏览过程中的资料沉淀下来。
+- **支持复杂输入和上传** —— 支持富文本编辑器、文件上传、图片上传、键盘提交，并为 X / YouTube 等页面做剪贴板快照和恢复。
+- **开发者级网页观察能力** —— 可以读取 Console 日志、Network 请求、截图、部分只读 JavaScript 结果、页面目标和窗口状态，用来理解复杂动态网页或排查网页问题。
 
-核心是把 AI 从独立聊天框带进浏览器现场，让它能感知网页，并在你确认的边界内代理你继续行动。
+核心是把 Hermes 从独立聊天框带进浏览器工作区，让它能感知当前网页现场，并在你设定的确认边界内代理你继续完成任务。
 
 ## 为什么用 Hermes
 
-- **不用离开当前网页问 AI** —— 看视频、读论文、刷帖子、看创作者后台时，可以直接在侧边栏提问或下指令，不用切到单独的 AI 对话框、复制链接、上传截图、重新解释上下文。
+- **不用离开当前网页问 Hermes** —— 看视频、读论文、刷帖子、看创作者后台时，可以直接在侧边栏提问或下指令，不用切到单独的 AI 对话框、复制链接、上传截图、重新解释上下文。
 - **让无视觉模型也能操控网页** —— Hermes 会把页面转换成无障碍树、浏览器状态和工具结果，必要时再走截图分析，所以 DeepSeek 这类文本模型也能理解并操作网页。
-- **更轻量的本地替代选择** —— 参考了 Claude in Chrome 这类工作流，但这是独立的 local-first 项目。Claude / Codex 额度紧张时，或者某些网页任务不值得动用重型 Agent 时，可以用 Hermes 搭配 DeepSeek 等更便宜的 token，或任何 OpenAI-compatible provider。
+- **参考 Claude in Chrome，但本地优先** —— 浏览器工作流接近 Claude in Chrome 的方向，但这是独立项目，provider 可切换，并围绕本地 Hermes Agent 运行。
 - **需要自备 Hermes Agent** —— 这个仓库是 Chrome 扩展前端；你仍然需要先安装并运行本地 [Hermes Agent](https://github.com/huaqing0/hermes-agent)。
 
 ## 你需要准备
@@ -44,17 +50,18 @@ Hermes 不是单一的总结器或网页抓取器。它让模型获得普通 AI 
 | **macOS 或 Windows** | macOS 完整支持；Windows experimental（见下方说明） |
 | **Chrome** 116+ | [google.com/chrome](https://www.google.com/chrome/) |
 
-无需注册云端账号——所有数据都在你本机。API Key 直连你选的 LLM 服务商。
+无需注册 Hermes 云端账号——扩展和 gateway 都在你本机运行。API Key 直连你选的 LLM 服务商。
 
 > **License**: [MIT](./LICENSE).
 
 ---
 
-## 三件核心能力
+## 核心工作流
 
-1. **住在网页里** — Chrome sidepanel 永驻右侧，AI 流式回复
-2. **实时感知页面** — 每次 action 后 agent 主动 `read_page` 拿 a11y tree
-3. **自主开 tab** — 在专属 Hermes Tab Group 里串/并行调研，不打扰用户
+1. **观察浏览器现场** —— Hermes 会先读当前 Tab、视觉状态、可交互目标和相关 Tab，再决定下一步。
+2. **自动化操控浏览器** —— Hermes 通过 Chrome DevTools Protocol、content scripts、tab APIs 和 Native Messaging 执行真实浏览器动作。
+3. **隔离每个任务** —— 每个 session 都有自己的 Chrome Tab Group，并行任务在视觉和逻辑上分开。
+4. **保留任务结果** —— 侧边栏历史、Markdown 导出、页面提取、截图和本地文件保存，让浏览器里的工作在关闭 Tab 后还能复用。
 
 ## 架构
 
@@ -231,16 +238,19 @@ MINIMAX_API_KEY=...
 
 核心浏览器工具：
 
-`fetch_url` · `tabs_context` · `read_page` · `find` · `click` · `hover` · `right_click` · `double_click` · `drag` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `close_tab` · `screenshot` · `visual_inspect` · `wait` · `browser_batch` · `get_console_logs` · `read_network_requests` · `save_to_local` · `extract_markdown`
+`fetch_url` · `tabs_context` · `read_page` · `inspect_targets` · `find` · `click` · `hover` · `right_click` · `double_click` · `drag` · `type` · `key` · `scroll` · `scroll_to` · `navigate` · `open_tab` · `close_tab` · `screenshot` · `visual_inspect` · `wait` · `browser_batch` · `get_console_logs` · `read_network_requests` · `save_to_local` · `extract_markdown` · `javascript_tool` · `file_upload` · `upload_image` · `shortcuts_list` · `shortcuts_execute` · `resize_window`
 
 - `read_page` 和 `ref_id` 操作走 `chrome.scripting.executeScript` 的 **isolated-world**，避免把 a11y tree 暴露到页面主世界
 - `browser_batch` 合并可预测的连续动作，减少工具调用 round-trip
 - `key` 支持 `Meta+Enter` 这类组合键，供 X / Twitter 等页面走键盘提交
 - `type` 对 X / YouTube 等富文本框会临时使用剪贴板粘贴整段文本，并在完成后恢复剪贴板；如果恢复时降级为纯文本或恢复失败，会在工具结果里标明 `clipboard_restore_mode`
 - `visual_inspect` 走真正的视觉通道：GPT / Claude / Gemini 等视觉主模型会收到真实图片；DeepSeek 等纯文本模型会走 Hermes `auxiliary.vision`，拿到短文字分析
-- `save_to_local` 通过本地 Native Messaging host 把任意文本/二进制内容写到本地任何用户可写位置（除系统目录和 `~/.ssh` 等敏感目录外），无需任何配置，需要先跑一次安装步骤；`extract_markdown` 把当前 Chrome 页面正文转 Markdown，常和 `save_to_local` 配合做"抓页面 + 落盘"
+- `inspect_targets` 能找到普通文本读取可能漏掉的可见按钮、输入框、图标按钮、富文本编辑器和 Shadow DOM 目标
+- `file_upload` / `upload_image` 在用户明确要求时，把本地文件或图片附加到网页表单
+- `shortcuts_list` / `shortcuts_execute` 暴露常见键盘工作流；`resize_window` 可为视觉任务调整浏览器窗口尺寸
+- `save_to_local` 通过本地 Native Messaging host 把文本或二进制内容写到本地任何用户可写位置（除系统目录和 `~/.ssh` 等敏感目录外），无需任何配置，需要先跑一次安装步骤；`extract_markdown` 把当前 Chrome 页面正文转 Markdown，常和 `save_to_local` 配合做“提取页面 + 落盘”
 
-## 保存抓取内容到本地（Native Messaging）
+## 保存浏览器输出到本地（Native Messaging）
 
 `save_to_local` 让 agent 把 `fetch_url` 的 HTML、`read_page` 的 a11y 树、`screenshot` 的截图、`extract_markdown` 的 Markdown 等内容写到本地文件。路径可以是用户文件系统下的任何位置（`~/Downloads/`、`C:\Users\you\Downloads\`、`/Volumes/your-ssd/`、`/tmp/` 等都可以），无需任何配置。Chrome 扩展本身不能直接写文件，所以走 Native Messaging 调用一个本地 Python 小进程 `hermes-filewriter.py`。
 

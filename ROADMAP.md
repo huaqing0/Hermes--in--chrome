@@ -1,6 +1,6 @@
 # Roadmap
 
-Hermes in Chrome is an **early-preview, local-first AI browser agent** that lives in the Chrome sidebar. This document outlines the direction and priorities.
+Hermes in Chrome is an **early-preview, local-first Chrome workspace for Hermes Agent**. It lets Hermes understand the current browser scene, automate browser actions, and keep each task isolated in its own tab group. This document outlines the direction and priorities.
 
 ## Current focus
 
